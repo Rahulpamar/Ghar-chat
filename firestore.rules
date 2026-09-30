@@ -1,0 +1,59 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check authentication
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Health check test doc
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // Users and Personal Connectors Codes
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Family Chat & Private Vault Messages
+    match /messages/{messageId} {
+      allow read, write: if true;
+    }
+
+    // Instagram-style 24hr Status Notes
+    match /story_notes/{noteId} {
+      allow read, write: if true;
+    }
+
+    // Connectors mapping
+    match /connectors/{connectorId} {
+      allow read, write: if true;
+    }
+
+    // Social Daily Streaks Feed & Posts
+    match /posts/{postId} {
+      allow read, write: if true;
+    }
+
+    // Streaks metadata
+    match /streaks/{streakId} {
+      allow read, write: if true;
+    }
+
+    // Contacts
+    match /contacts/{contactId} {
+      allow read, write: if true;
+    }
+
+    // Family Time Capsules
+    match /time_capsules/{capsuleId} {
+      allow read, write: if true;
+    }
+
+    // Emergency SOS Panic Drops
+    match /emergency_alerts/{alertId} {
+      allow read, write: if true;
+    }
+  }
+}

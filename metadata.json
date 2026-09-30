@@ -1,0 +1,12 @@
+{
+  "name": "GharCall - Family AI Voice Assistant & Mood Hub",
+  "description": "Production-ready family communication hub featuring real-time inbound & outbound AI voice assistant with urgent call forwarding, live transcription & recording logs, collaborative family mood board with audio/photo notes, and dynamic role-based access control.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
