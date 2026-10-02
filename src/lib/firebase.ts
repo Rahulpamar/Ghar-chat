@@ -22,7 +22,7 @@ import {
   Firestore,
 } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
-import { Contact, ChatMessage, CallSession, StoryNote, Connector, SocialPost, TimeCapsule, EmergencySosEvent } from "../types";
+import { Contact, ChatMessage, CallSession, StoryNote, Connector, SocialPost, TimeCapsule, TimeCapsuleUnlockRequest, EmergencySosEvent } from "../types";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 // 1. Initialize Firebase App
@@ -526,6 +526,10 @@ export async function createFirestorePost(postData: Partial<SocialPost>) {
       quote: postData.quote || "",
       streakCount: postData.streakCount || 1,
       targetAudience: postData.targetAudience || "all",
+      isViewOnce: !!postData.isViewOnce,
+      viewDurationSeconds: postData.viewDurationSeconds || 7,
+      viewedBy: postData.viewedBy || [],
+      disappearedFor: postData.disappearedFor || [],
       createdAt: new Date().toISOString(),
       likes: [],
       comments: [],
@@ -536,6 +540,93 @@ export async function createFirestorePost(postData: Partial<SocialPost>) {
   } catch (error: any) {
     console.error("[Firestore] Error creating post:", error);
     return { success: false, error: error?.message };
+  }
+}
+
+/**
+ * Delete a Daily Streak Post from Firestore permanently
+ */
+export async function deleteFirestorePost(postId: string) {
+  try {
+    const postRef = doc(db, "posts", postId);
+    await deleteDoc(postRef);
+    return { success: true };
+  } catch (error: any) {
+    console.error("[Firestore] Error deleting post from Firestore:", error);
+    return { success: false, error: error?.message };
+  }
+}
+
+/**
+ * Mark a View-Once Streak as viewed and self-destructed for a recipient in Firestore
+ */
+export async function markFirestoreStreakViewed(postId: string, userCode: string) {
+  try {
+    const postRef = doc(db, "posts", postId);
+    const snap = await getDocFromServer(postRef).catch(() => null);
+    const existing = snap && snap.exists() ? (snap.data() as Partial<SocialPost>) : null;
+    const viewedBy = Array.from(new Set([...(existing?.viewedBy || []), userCode]));
+    const disappearedFor = Array.from(new Set([...(existing?.disappearedFor || []), userCode]));
+    await setDoc(postRef, {
+      viewedBy,
+      disappearedFor,
+    }, { merge: true });
+    return { success: true };
+  } catch (error: any) {
+    console.warn("[Firestore] Notice updating view-once streak:", error);
+    return { success: false };
+  }
+}
+
+/**
+ * Real-time subscription to Vibe Streak Trackers
+ */
+export function subscribeToFirestoreVibeStreaks(
+  userCode: string,
+  onUpdate: (streaks: any[]) => void
+) {
+  const streaksCol = collection(db, "vibe_streaks");
+  return onSnapshot(
+    streaksCol,
+    (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      onUpdate(list);
+    },
+    (err) => console.warn("[Firestore] Vibe streaks notice:", err)
+  );
+}
+
+/**
+ * Update Vibe Streak in Firestore
+ */
+export async function saveFirestoreVibeStreak(streakData: {
+  id: string;
+  userCode1: string;
+  userCode2: string;
+  user1Name?: string;
+  user2Name?: string;
+  streakCount: number;
+  lastInteractionAt: string;
+  expiresAt?: string;
+  isExpiringSoon?: boolean;
+}) {
+  try {
+    const streakRef = doc(db, "vibe_streaks", streakData.id);
+    await setDoc(
+      streakRef,
+      cleanForFirestore({
+        ...streakData,
+        updatedAt: new Date().toISOString(),
+      }),
+      { merge: true }
+    );
+    return { success: true };
+  } catch (error) {
+    console.warn("[Firestore] Error saving vibe streak:", error);
+    return { success: false };
   }
 }
 
@@ -779,6 +870,8 @@ export function subscribeToFirestoreTimeCapsules(
           ...data,
           id: docSnap.id,
           isUnlocked: data.isUnlocked || isTimeUnlocked,
+          unlockedForUsers: data.unlockedForUsers || [],
+          unlockRequests: data.unlockRequests || [],
         });
       });
       onUpdate(list);
@@ -805,10 +898,13 @@ export async function createFirestoreTimeCapsule(capsuleData: Omit<TimeCapsule, 
       authorId: capsuleData.authorId,
       authorName: capsuleData.authorName,
       authorAvatar: capsuleData.authorAvatar,
+      authorCode: capsuleData.authorCode || capsuleData.authorId,
       targetAudience: capsuleData.targetAudience || 'family',
       unlockDate: capsuleData.unlockDate,
       occasionTag: capsuleData.occasionTag || 'Diwali 🪔',
       isUnlocked: false,
+      unlockedForUsers: [],
+      unlockRequests: [],
       createdAt: new Date().toISOString(),
       reactions: {},
     };
@@ -824,15 +920,124 @@ export async function createFirestoreTimeCapsule(capsuleData: Omit<TimeCapsule, 
 /**
  * Manually unlock or celebrate an unlocked time capsule
  */
-export async function unlockFirestoreTimeCapsule(capsuleId: string) {
+export async function unlockFirestoreTimeCapsule(capsuleId: string, forUserCode?: string) {
   try {
     const capsuleRef = doc(db, "time_capsules", capsuleId);
-    await setDoc(capsuleRef, { isUnlocked: true }, { merge: true });
+    if (forUserCode) {
+      // Unlock specifically for this user
+      const snap = await getDocFromServer(capsuleRef);
+      const current = snap.exists() ? (snap.data() as TimeCapsule) : null;
+      const currentUnlocked = current?.unlockedForUsers || [];
+      if (!currentUnlocked.includes(forUserCode)) {
+        currentUnlocked.push(forUserCode);
+      }
+      await setDoc(capsuleRef, { unlockedForUsers: currentUnlocked }, { merge: true });
+    } else {
+      await setDoc(capsuleRef, { isUnlocked: true }, { merge: true });
+    }
     return { success: true };
   } catch (error: any) {
     console.error("[Firestore] Error unlocking time capsule:", error);
     return { success: false, error: error?.message };
   }
+}
+
+/**
+ * Submit a fun Bribe / Unlock Request to the Time Capsule owner
+ */
+export async function submitFirestoreTimeCapsuleUnlockRequest(req: TimeCapsuleUnlockRequest) {
+  try {
+    const reqRef = doc(db, "time_capsule_requests", req.id);
+    await setDoc(reqRef, cleanForFirestore(req));
+
+    // Also update the capsule's internal requests array for atomic sync
+    const capsuleRef = doc(db, "time_capsules", req.capsuleId);
+    const snap = await getDocFromServer(capsuleRef);
+    if (snap.exists()) {
+      const data = snap.data() as TimeCapsule;
+      const existing = data.unlockRequests || [];
+      const updated = [req, ...existing.filter((r) => r.id !== req.id)];
+      await setDoc(capsuleRef, { unlockRequests: updated }, { merge: true });
+    }
+
+    return { success: true, request: req };
+  } catch (error: any) {
+    console.error("[Firestore] Error submitting time capsule request:", error);
+    return { success: false, error: error?.message };
+  }
+}
+
+/**
+ * Respond to a Time Capsule unlock request (Owner accepts/declines bribe)
+ */
+export async function respondFirestoreTimeCapsuleUnlockRequest(
+  requestId: string,
+  capsuleId: string,
+  status: 'accepted' | 'declined' | 'rejected',
+  requesterCode: string
+) {
+  try {
+    const now = new Date().toISOString();
+    // 1. Update request document
+    const reqRef = doc(db, "time_capsule_requests", requestId);
+    await setDoc(reqRef, { status, respondedAt: now }, { merge: true });
+
+    // 2. If accepted, unlock the capsule specifically for requesterCode
+    const capsuleRef = doc(db, "time_capsules", capsuleId);
+    const snap = await getDocFromServer(capsuleRef);
+    if (snap.exists()) {
+      const data = snap.data() as TimeCapsule;
+      const existingUnlocked = data.unlockedForUsers || [];
+      if (status === 'accepted' && requesterCode && !existingUnlocked.includes(requesterCode)) {
+        existingUnlocked.push(requesterCode);
+      }
+      const existingReqs = (data.unlockRequests || []).map((r) =>
+        r.id === requestId ? { ...r, status, respondedAt: now } : r
+      );
+      await setDoc(
+        capsuleRef,
+        {
+          unlockedForUsers: existingUnlocked,
+          unlockRequests: existingReqs,
+        },
+        { merge: true }
+      );
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("[Firestore] Error responding to time capsule request:", error);
+    return { success: false, error: error?.message };
+  }
+}
+
+/**
+ * Real-time subscription to Time Capsule Unlock & Bribe Requests
+ */
+export function subscribeToFirestoreTimeCapsuleRequests(
+  userCode: string,
+  onUpdate: (requests: TimeCapsuleUnlockRequest[]) => void
+) {
+  const reqCol = collection(db, "time_capsule_requests");
+  const q = query(reqCol, orderBy("createdAt", "desc"), limit(30));
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list: TimeCapsuleUnlockRequest[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as TimeCapsuleUnlockRequest;
+        // Include if this user is either the owner or the requester
+        if (data.ownerCode === userCode || data.requesterCode === userCode || data.requesterId === userCode) {
+          list.push({ ...data, id: docSnap.id });
+        }
+      });
+      onUpdate(list);
+    },
+    (error) => {
+      console.warn("[Firestore] Time capsule requests notice:", error);
+    }
+  );
 }
 
 // ----------------------------------------------------

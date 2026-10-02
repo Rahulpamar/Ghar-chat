@@ -9,7 +9,8 @@ import {
   Lock, 
   Copy, 
   Check, 
-  HeartHandshake
+  HeartHandshake,
+  Sparkles
 } from "lucide-react";
 import { FamilyMember } from "../types";
 
@@ -24,6 +25,7 @@ interface HeaderProps {
   roomCode?: string;
   onOpenAuth?: () => void;
   onLockApp?: () => void;
+  onOpenRewind?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -37,6 +39,7 @@ export const Header: React.FC<HeaderProps> = ({
   roomCode = "GHAR-FAM-7182",
   onOpenAuth,
   onLockApp,
+  onOpenRewind,
 }) => {
   const [copiedRoom, setCopiedRoom] = useState(false);
   const [copiedUserCode, setCopiedUserCode] = useState(false);
@@ -74,6 +77,19 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Center / Right controls */}
         <div className="flex items-center space-x-2 sm:space-x-3">
+          {/* Ghar Rewind Story Montage Action */}
+          {onOpenRewind && (
+            <button
+              onClick={onOpenRewind}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-gradient-to-r from-[#0F5132] via-emerald-600 to-amber-500 hover:from-[#0c4128] hover:to-amber-600 text-white text-xs font-bold shadow-xs hover:shadow-md transition active:scale-95 cursor-pointer"
+              title="Watch today's Ghar Rewind story montage"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-spin" />
+              <span className="hidden sm:inline">Ghar Rewind</span>
+              <span className="sm:hidden">Rewind</span>
+            </button>
+          )}
+
           {/* User's Dynamic Personal Code Badge */}
           <button
             onClick={handleCopyUserCode}

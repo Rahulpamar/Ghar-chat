@@ -13,10 +13,15 @@ import {
   X, 
   Smile, 
   Share2,
-  Check
+  Check,
+  Trash2,
+  EyeOff,
+  Eye,
+  Timer
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { SocialPost, UserAuthSession } from "../types";
+import { SnapViewOnceModal } from "./SnapViewOnceModal";
 
 interface DailyStreaksSocialFeedProps {
   posts: SocialPost[];
@@ -24,6 +29,9 @@ interface DailyStreaksSocialFeedProps {
   onCreatePost: (post: Partial<SocialPost>) => void;
   onLikePost: (postId: string) => void;
   onCommentPost: (postId: string, commentText: string) => void;
+  onDeletePost?: (postId: string) => void;
+  onMarkViewOnceViewed?: (postId: string) => void;
+  onOpenRewind?: () => void;
 }
 
 const PRESET_QUOTES = [
@@ -57,12 +65,17 @@ export const DailyStreaksSocialFeed: React.FC<DailyStreaksSocialFeedProps> = ({
   onCreatePost,
   onLikePost,
   onCommentPost,
+  onDeletePost,
+  onMarkViewOnceViewed,
+  onOpenRewind,
 }) => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [snapViewingPost, setSnapViewingPost] = useState<SocialPost | null>(null);
   const [newLocationTag, setNewLocationTag] = useState(PRESET_LOCATIONS[0]);
   const [newPhotoUrl, setNewPhotoUrl] = useState(PRESET_IMAGES[0]);
   const [newNote, setNewNote] = useState("");
   const [newQuote, setNewQuote] = useState(PRESET_QUOTES[0]);
+  const [newIsViewOnce, setNewIsViewOnce] = useState(false);
 
   // Comment input per post
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
@@ -82,9 +95,12 @@ export const DailyStreaksSocialFeed: React.FC<DailyStreaksSocialFeedProps> = ({
       note: newNote.trim(),
       quote: newQuote,
       streakCount: 15,
+      isViewOnce: newIsViewOnce,
+      viewDurationSeconds: 7,
     });
 
     setNewNote("");
+    setNewIsViewOnce(false);
     setIsCreateModalOpen(false);
     confetti({ particleCount: 70, spread: 80, origin: { y: 0.6 } });
   };
@@ -101,14 +117,14 @@ export const DailyStreaksSocialFeed: React.FC<DailyStreaksSocialFeedProps> = ({
     <div id="gharcall-social-feed" className="flex flex-col h-full bg-slate-50/50 overflow-y-auto">
       {/* 1. TOP STREAK HIGHLIGHT BANNER */}
       <div className="bg-[#FFFFFF] border-b border-slate-100 p-4 shadow-xs">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center border border-amber-200">
               <Flame className="w-7 h-7 stroke-[2.2] animate-bounce text-amber-500" />
             </div>
             <div>
               <div className="flex items-center gap-1.5">
-                <h2 className="text-base font-bold text-[#0F172A]">Family Daily Streaks</h2>
+                <h2 className="text-base font-bold text-[#0F172A] tracking-tight">Family Daily Streaks</h2>
                 <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black uppercase tracking-wider">
                   🔥 14-Day Global Streak
                 </span>
@@ -119,15 +135,28 @@ export const DailyStreaksSocialFeed: React.FC<DailyStreaksSocialFeedProps> = ({
             </div>
           </div>
 
-          {/* New Streak Post Button */}
-          <button
-            id="share-streak-btn"
-            onClick={() => setIsCreateModalOpen(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#0F5132] hover:bg-[#0c4128] text-white text-xs font-bold shadow-md shadow-[#0F5132]/25 transition-all hover:scale-105 active:scale-95 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Share Daily Streak</span>
-          </button>
+          {/* Action Buttons: Ghar Rewind & Share Streak */}
+          <div className="flex items-center gap-2">
+            {onOpenRewind && (
+              <button
+                type="button"
+                onClick={onOpenRewind}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-gradient-to-r from-[#0F5132] via-emerald-600 to-amber-500 hover:from-[#0c4128] text-white text-xs font-bold shadow-sm transition hover:scale-105 active:scale-95 cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-spin" />
+                <span>Ghar Rewind</span>
+              </button>
+            )}
+
+            <button
+              id="share-streak-btn"
+              onClick={() => setIsCreateModalOpen(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#0F5132] hover:bg-[#0c4128] text-white text-xs font-bold shadow-md shadow-[#0F5132]/25 transition-all hover:scale-105 active:scale-95 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Share Streak</span>
+            </button>
+          </div>
         </div>
 
         {/* Member Streak Rings */}
@@ -158,6 +187,10 @@ export const DailyStreaksSocialFeed: React.FC<DailyStreaksSocialFeedProps> = ({
       <div className="max-w-2xl w-full mx-auto p-4 space-y-5">
         {posts.map((post) => {
           const isLiked = post.likes?.includes(currentSession.userCode);
+          const isAuthor = post.authorCode === currentSession.userCode || post.authorId === currentSession.userCode;
+          const hasViewedOnce = post.isViewOnce && post.disappearedFor?.includes(currentSession.userCode);
+          const isUnviewedSnap = post.isViewOnce && !isAuthor && !hasViewedOnce;
+
           return (
             <motion.div
               key={post.id}
@@ -179,6 +212,12 @@ export const DailyStreaksSocialFeed: React.FC<DailyStreaksSocialFeedProps> = ({
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-bold">
                         {post.authorCode}
                       </span>
+                      {post.isViewOnce && (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
+                          <EyeOff className="w-3 h-3 text-amber-700" />
+                          View-Once
+                        </span>
+                      )}
                     </div>
                     {post.locationTag && (
                       <div className="flex items-center gap-1 text-[11px] text-[#0F5132] font-semibold mt-0.5">
@@ -189,20 +228,73 @@ export const DailyStreaksSocialFeed: React.FC<DailyStreaksSocialFeedProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold">
-                  <Flame className="w-4 h-4 text-amber-500" />
-                  <span>{post.streakCount || 14} Day Streak</span>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold">
+                    <Flame className="w-4 h-4 text-amber-500" />
+                    <span>{post.streakCount || 14} Day Streak</span>
+                  </div>
+
+                  {isAuthor && onDeletePost && (
+                    <button
+                      type="button"
+                      onClick={() => onDeletePost(post.id)}
+                      className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                      title="Delete this streak permanently"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {/* High-Res Photo */}
-              <div className="relative aspect-4/3 sm:aspect-16/10 bg-slate-100 overflow-hidden">
-                <img
-                  src={post.photoUrl}
-                  alt="Post Photo"
-                  className="w-full h-full object-cover transition-transform hover:scale-102 duration-500"
-                />
-              </div>
+              {/* High-Res Photo OR View-Once Disappearing Media */}
+              {hasViewedOnce ? (
+                <div className="p-8 aspect-4/3 sm:aspect-16/10 bg-slate-900 flex flex-col items-center justify-center text-center space-y-2 text-white">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-800 text-amber-400 flex items-center justify-center border border-slate-700 shadow-xs">
+                    <EyeOff className="w-6 h-6 animate-pulse" />
+                  </div>
+                  <h4 className="text-xs font-bold text-amber-300">View-Once Media Disappeared</h4>
+                  <p className="text-[11px] text-slate-400 max-w-xs">
+                    You opened this snap media and it permanently self-destructed.
+                  </p>
+                </div>
+              ) : isUnviewedSnap ? (
+                <div
+                  onClick={() => setSnapViewingPost(post)}
+                  className="relative aspect-4/3 sm:aspect-16/10 bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950/60 flex flex-col items-center justify-center p-6 text-center text-white cursor-pointer group hover:border-amber-500/50 transition overflow-hidden"
+                >
+                  <div className="w-16 h-16 rounded-3xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/40 group-hover:scale-110 transition shadow-lg mb-2">
+                    <Flame className="w-9 h-9 animate-bounce text-amber-400" />
+                  </div>
+                  <div className="space-y-1">
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/30 text-[10px] font-black uppercase tracking-wider">
+                      Snapchat Style
+                    </span>
+                    <h4 className="text-sm font-black text-white">1-Time View-Once Streak</h4>
+                    <p className="text-xs text-slate-300">Tap to open • {post.viewDurationSeconds || 7}s timer before self-destruct</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="mt-3 px-4 py-1.5 rounded-full bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black shadow-md transition cursor-pointer"
+                  >
+                    Tap to Open 🔥
+                  </button>
+                </div>
+              ) : (
+                <div className="relative aspect-4/3 sm:aspect-16/10 bg-slate-100 overflow-hidden">
+                  <img
+                    src={post.photoUrl}
+                    alt="Post Photo"
+                    className="w-full h-full object-cover transition-transform hover:scale-102 duration-500"
+                  />
+                  {post.isViewOnce && isAuthor && (
+                    <div className="absolute top-3 left-3 px-2.5 py-1 rounded-xl bg-black/75 backdrop-blur-xs border border-amber-400/40 text-amber-300 text-[10px] font-bold flex items-center gap-1.5 shadow-md">
+                      <Eye className="w-3.5 h-3.5 text-amber-400" />
+                      <span>View-Once • Opened by {post.viewedBy?.length || 0}</span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Inspiring Quote Sticker */}
               {post.quote && (
@@ -405,6 +497,23 @@ export const DailyStreaksSocialFeed: React.FC<DailyStreaksSocialFeedProps> = ({
                 />
               </div>
 
+              {/* View-Once Toggle */}
+              <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <EyeOff className="w-4 h-4 text-amber-700" />
+                  <div>
+                    <span className="font-bold text-amber-950 block">View-Once Media</span>
+                    <span className="text-[10px] text-amber-800">Self-destructs after recipient views</span>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={newIsViewOnce}
+                  onChange={(e) => setNewIsViewOnce(e.target.checked)}
+                  className="w-4 h-4 accent-amber-600 rounded cursor-pointer"
+                />
+              </div>
+
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
@@ -426,6 +535,18 @@ export const DailyStreaksSocialFeed: React.FC<DailyStreaksSocialFeedProps> = ({
           </div>
         )}
       </AnimatePresence>
+
+      {/* SNAPCHAT-STYLE VIEW ONCE MODAL */}
+      <SnapViewOnceModal
+        post={snapViewingPost}
+        isOpen={!!snapViewingPost}
+        onClose={() => setSnapViewingPost(null)}
+        onSelfDestruct={(postId) => {
+          if (onMarkViewOnceViewed) {
+            onMarkViewOnceViewed(postId);
+          }
+        }}
+      />
     </div>
   );
 };

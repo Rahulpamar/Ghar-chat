@@ -24,6 +24,8 @@ import {
 import { AppSettings, CallSession, TranscriptEntry, Contact } from "../types";
 import { speakText, stopSpeaking, playAlertSound } from "../lib/speechSynthesis";
 import { startAudioRecording, AudioRecorderController } from "../lib/audioRecorder";
+import { FrequencyWaveform } from "./FrequencyWaveform";
+import { LiveWaveformVisualizer } from "./LiveWaveformVisualizer";
 
 interface TelephonySimulatorProps {
   settings: AppSettings;
@@ -657,29 +659,25 @@ export const TelephonySimulator: React.FC<TelephonySimulatorProps> = ({
                 )}
               </div>
 
-              {/* Active Audio Waveform Animation when AI or User is speaking */}
+              {/* Active Frequency Waveform Animation when AI or Caller is speaking */}
               {isCalling && (
-                <div className="mb-4 bg-stone-50 border border-stone-200/80 rounded-xl p-3 flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <Bot className={`w-5 h-5 ${isAiSpeaking ? "text-amber-600 animate-bounce" : "text-stone-400"}`} />
-                    <span className="text-xs font-semibold text-stone-700">
-                      {isAiSpeaking ? "GharCall AI Speaking..." : isListening ? "Listening to Caller..." : "Call In Progress"}
-                    </span>
-                  </div>
-                  {/* Waveform bars */}
-                  <div className="flex items-center space-x-1 h-5">
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-                      <span
-                        key={i}
-                        className={`w-1 rounded-full transition-all duration-150 ${
-                          isAiSpeaking || isListening ? "bg-amber-600" : "bg-stone-300"
-                        }`}
-                        style={{
-                          height: isAiSpeaking || isListening ? `${(i % 3 + 1) * 6}px` : "4px",
-                        }}
-                      />
-                    ))}
-                  </div>
+                <div className="mb-4">
+                  <FrequencyWaveform
+                    isPlaying={isAiSpeaking || isListening}
+                    audioLevel={isAiSpeaking ? 0.7 : isListening ? 0.5 : 0.2}
+                    height={86}
+                    theme={isAiSpeaking ? "amber" : "emerald"}
+                    title="Live Call Audio Stream"
+                    subTitle={
+                      isAiSpeaking
+                        ? "AI Voice Synthesis • 48 kHz Live Stream"
+                        : isListening
+                        ? "Deepgram Live STT • Listening to Audio Input"
+                        : "Channel Connected • Standby"
+                    }
+                    showFrequencyBars={true}
+                    showTelemetry={true}
+                  />
                 </div>
               )}
 

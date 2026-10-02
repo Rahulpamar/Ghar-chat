@@ -14,6 +14,7 @@ import { AuthModal } from "./components/AuthModal";
 import { UserProfileSheetModal, UserProfileData } from "./components/UserProfileSheetModal";
 import { VoiceRoomModal } from "./components/VoiceRoomModal";
 import { CallLogsDashboard } from "./components/CallLogsDashboard";
+import { GharRewindModal } from "./components/GharRewindModal";
 import { 
   Flame, 
   PlusCircle, 
@@ -39,9 +40,13 @@ import {
   Connector, 
   StoryNote,
   TimeCapsule,
-  EmergencySosEvent
+  TimeCapsuleUnlockRequest,
+  EmergencySosEvent,
+  GharRewindMoment,
+  VibeStreakTracker
 } from "./types";
 import { socket } from "./lib/socketClient";
+import { TimeCapsuleUnlockNotificationToast } from "./components/TimeCapsuleUnlockNotificationToast";
 import { 
   subscribeToFirestoreMessages, 
   sendFirestoreMessage, 
@@ -53,13 +58,24 @@ import {
   updateFirestoreConnectorCategory,
   subscribeToFirestorePosts,
   createFirestorePost,
+  deleteFirestorePost,
+  markFirestoreStreakViewed,
+  subscribeToFirestoreVibeStreaks,
   subscribeToFirestoreTimeCapsules,
   createFirestoreTimeCapsule,
   unlockFirestoreTimeCapsule,
+  submitFirestoreTimeCapsuleUnlockRequest,
+  respondFirestoreTimeCapsuleUnlockRequest,
+  subscribeToFirestoreTimeCapsuleRequests,
   subscribeToFirestoreEmergencySos,
   broadcastFirestoreEmergencySos,
   resolveFirestoreEmergencySos
 } from "./lib/firebase";
+import { 
+  aggregateGharRewindMontage, 
+  computeVibeStreaks, 
+  syncVibeStreaksToFirestore 
+} from "./lib/rewindWorker";
 
 export default function App() {
   const [appState, setAppState] = useState<AppState | null>(null);
@@ -80,6 +96,16 @@ export default function App() {
   // Trigger modals from Home Screen Universal Post bar
   const [isStreakModalOpen, setIsStreakModalOpen] = useState<boolean>(false);
   const [isAddNoteModalOpen, setIsAddNoteModalOpen] = useState<boolean>(false);
+
+  // Ghar Rewind Montage Modal State
+  const [isRewindModalOpen, setIsRewindModalOpen] = useState<boolean>(false);
+  const [rewindMoments, setRewindMoments] = useState<GharRewindMoment[]>([]);
+
+  // Vibe Streak Trackers state
+  const [vibeStreaks, setVibeStreaks] = useState<VibeStreakTracker[]>([]);
+
+  // Time Capsule Bribe / Unlock Requests
+  const [unlockRequests, setUnlockRequests] = useState<TimeCapsuleUnlockRequest[]>([]);
 
   // Active Emergency SOS Panic Event
   const [activeSosAlert, setActiveSosAlert] = useState<EmergencySosEvent | null>(null);
@@ -224,6 +250,16 @@ export default function App() {
         });
       }),
 
+      socket.subscribe("social:post_deleted", ({ postId }: { postId: string }) => {
+        setAppState((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            socialPosts: (prev.socialPosts || []).filter((p) => p.id !== postId),
+          };
+        });
+      }),
+
       socket.subscribe("time_capsule:created", (newCapsule: TimeCapsule) => {
         setAppState((prev) => {
           if (!prev) return prev;
@@ -245,6 +281,33 @@ export default function App() {
             ),
           };
         });
+      }),
+
+      socket.subscribe("time_capsule:unlock_requested", ({ request }: { request: TimeCapsuleUnlockRequest }) => {
+        if (request.ownerCode === authSession.userCode || request.ownerName === authSession.name) {
+          setUnlockRequests((prev) => [request, ...prev.filter((r) => r.id !== request.id)]);
+        }
+      }),
+
+      socket.subscribe("time_capsule:unlock_responded", ({ capsuleId, requesterCode, status }: any) => {
+        if (status === "accepted") {
+          setAppState((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              timeCapsules: (prev.timeCapsules || []).map((c) => {
+                if (c.id !== capsuleId) return c;
+                const currentUnlocked = c.unlockedForUsers || [];
+                return {
+                  ...c,
+                  unlockedForUsers: currentUnlocked.includes(requesterCode)
+                    ? currentUnlocked
+                    : [...currentUnlocked, requesterCode],
+                };
+              }),
+            };
+          });
+        }
       }),
 
       socket.subscribe("emergency_sos:triggered", (sosEvent: EmergencySosEvent) => {
@@ -341,6 +404,21 @@ export default function App() {
       setAppState((prev) => (prev ? { ...prev, activeSosPanic: liveSos } : prev));
     });
 
+    // G. Subscribe to Firestore Automated Vibe Streaks
+    const unsubVibeStreaks = subscribeToFirestoreVibeStreaks(authSession.userCode, (firestoreStreaks) => {
+      if (firestoreStreaks && firestoreStreaks.length > 0) {
+        setVibeStreaks(firestoreStreaks);
+        setAppState((prev) => (prev ? { ...prev, vibeStreaks: firestoreStreaks } : prev));
+      }
+    });
+
+    // H. Subscribe to Firestore Time Capsule Unlock & Bribe Requests
+    const unsubUnlockReqs = subscribeToFirestoreTimeCapsuleRequests(authSession.userCode, (reqs) => {
+      if (reqs && reqs.length > 0) {
+        setUnlockRequests(reqs);
+      }
+    });
+
     return () => {
       unsubMessages();
       unsubNotes();
@@ -348,8 +426,23 @@ export default function App() {
       unsubPosts();
       unsubTimeCapsules();
       unsubEmergencySos();
+      unsubVibeStreaks();
+      unsubUnlockReqs();
     };
   }, [authSession.userCode]);
+
+  // Automated Vibe Streak background computer & Firestore synchronizer
+  useEffect(() => {
+    if (!appState) return;
+    const computed = computeVibeStreaks(
+      appState.connectors || [],
+      appState.messages || [],
+      authSession.userCode,
+      authSession.name
+    );
+    setVibeStreaks(computed);
+    syncVibeStreaksToFirestore(computed);
+  }, [(appState?.connectors || []).length, (appState?.messages || []).length, (appState?.socialPosts || []).length]);
 
   // Loading Screen
   if (!appState) {
@@ -644,6 +737,65 @@ export default function App() {
     }
   };
 
+  // Actions: Delete Daily Streak Post permanently
+  const handleDeletePost = async (postId: string) => {
+    try {
+      // Optimistic instant zero-latency removal
+      setAppState((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          socialPosts: (prev.socialPosts || []).filter((p) => p.id !== postId),
+        };
+      });
+
+      await fetch(`/api/social/posts/${postId}`, { method: "DELETE" });
+      await deleteFirestorePost(postId);
+      confetti({ particleCount: 30, spread: 40 });
+    } catch (err) {
+      console.error("Failed to delete post:", err);
+    }
+  };
+
+  // Actions: Mark View-Once Streak as viewed (Snapchat-style self-destruct)
+  const handleMarkViewOnceViewed = async (postId: string) => {
+    try {
+      // Optimistic instant zero-latency update
+      setAppState((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          socialPosts: (prev.socialPosts || []).map((p) => {
+            if (p.id !== postId) return p;
+            const viewedBy = Array.from(new Set([...(p.viewedBy || []), authSession.userCode]));
+            const disappearedFor = Array.from(new Set([...(p.disappearedFor || []), authSession.userCode]));
+            return {
+              ...p,
+              viewedBy,
+              disappearedFor,
+            };
+          }),
+        };
+      });
+
+      await fetch(`/api/social/posts/${postId}/view-once`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userCode: authSession.userCode }),
+      });
+      await markFirestoreStreakViewed(postId, authSession.userCode);
+    } catch (err) {
+      console.error("Failed to mark view-once streak viewed:", err);
+    }
+  };
+
+  // Actions: Open Ghar Rewind Montage
+  const handleOpenRewind = () => {
+    const moments = aggregateGharRewindMontage(appState?.socialPosts || [], appState?.storyNotes || []);
+    setRewindMoments(moments);
+    setIsRewindModalOpen(true);
+  };
+
   // Actions: Like Post
   const handleLikePost = async (postId: string) => {
     try {
@@ -736,6 +888,121 @@ export default function App() {
       });
     } catch (err) {
       console.error("Failed to unlock time capsule:", err);
+    }
+  };
+
+  // Actions: Request Time Capsule Unlock with Bribe Message
+  const handleRequestTimeCapsuleUnlock = async (capsuleId: string, message: string) => {
+    try {
+      const capsule = (appState?.timeCapsules || []).find((c) => c.id === capsuleId);
+      const ownerCode = capsule?.authorCode || capsule?.authorId || "GHAR-8823";
+      const ownerName = capsule?.authorName || "Sunita Sharma";
+
+      const req: TimeCapsuleUnlockRequest = {
+        id: `req-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        capsuleId,
+        capsuleTitle: capsule?.title || "Memory Vault",
+        requesterId: authSession.userCode,
+        requesterName: authSession.name,
+        requesterAvatar: authSession.avatar,
+        requesterCode: authSession.userCode,
+        ownerCode,
+        ownerName,
+        message,
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      };
+
+      setUnlockRequests((prev) => [req, ...prev.filter((r) => r.id !== req.id)]);
+
+      await fetch(`/api/time-capsules/${capsuleId}/request-unlock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+
+      await submitFirestoreTimeCapsuleUnlockRequest(req);
+    } catch (err) {
+      console.error("Failed to submit time capsule unlock request:", err);
+    }
+  };
+
+  // Actions: Owner Accepts Bribe & Unlocks Capsule for Requester Instantly
+  const handleAcceptUnlockRequest = async (request: TimeCapsuleUnlockRequest) => {
+    try {
+      const requesterCode = request.requesterCode || request.requesterId;
+      // 1. Optimistic zero-latency state update
+      setAppState((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          timeCapsules: (prev.timeCapsules || []).map((c) => {
+            if (c.id !== request.capsuleId) return c;
+            const currentUnlocked = c.unlockedForUsers || [];
+            return {
+              ...c,
+              unlockedForUsers: currentUnlocked.includes(requesterCode)
+                ? currentUnlocked
+                : [...currentUnlocked, requesterCode],
+            };
+          }),
+        };
+      });
+
+      setUnlockRequests((prev) =>
+        prev.map((r) => (r.id === request.id ? { ...r, status: "accepted" as const } : r))
+      );
+
+      confetti({ particleCount: 70, spread: 80, origin: { y: 0.6 } });
+
+      await fetch(`/api/time-capsules/${request.capsuleId}/respond-unlock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: request.id,
+          status: "accepted",
+          requesterCode,
+        }),
+      });
+
+      await respondFirestoreTimeCapsuleUnlockRequest(
+        request.id,
+        request.capsuleId,
+        "accepted",
+        requesterCode
+      );
+    } catch (err) {
+      console.error("Failed to accept unlock request:", err);
+    }
+  };
+
+  // Actions: Owner Rejects Bribe Request
+  const handleRejectUnlockRequest = async (request: TimeCapsuleUnlockRequest) => {
+    try {
+      const requesterCode = request.requesterCode || request.requesterId;
+      // 1. Optimistic zero-latency state update - marks request as rejected without modifying capsule unlockedForUsers
+      setUnlockRequests((prev) =>
+        prev.map((r) => (r.id === request.id ? { ...r, status: "rejected" as const } : r))
+      );
+
+      await fetch(`/api/time-capsules/${request.capsuleId}/respond-unlock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: request.id,
+          status: "rejected",
+          requesterCode,
+        }),
+      });
+
+      await respondFirestoreTimeCapsuleUnlockRequest(
+        request.id,
+        request.capsuleId,
+        "rejected",
+        requesterCode
+      );
+    } catch (err) {
+      console.error("Failed to reject unlock request:", err);
     }
   };
 
@@ -840,6 +1107,16 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Ghar Rewind Montage Button */}
+          <button
+            onClick={handleOpenRewind}
+            className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#0F5132] via-emerald-600 to-amber-500 hover:from-[#0c4128] text-white text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer hover:scale-105 active:scale-95"
+            title="Watch daily chronological story montage of family & connector moments"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-spin" />
+            <span>Ghar Rewind</span>
+          </button>
+
           {/* Post Streak Button */}
           <button
             onClick={() => setIsStreakModalOpen(true)}
@@ -968,9 +1245,14 @@ export default function App() {
           onTogglePrivateVault={handleTogglePrivateVault}
           onUpdateUserPin={handleUpdateUserPin}
           familyPosts={familyStreaks}
+          timeCapsules={appState.timeCapsules || []}
+          onRequestTimeCapsuleUnlock={handleRequestTimeCapsuleUnlock}
           onLikePost={handleLikePost}
           onJoinFamilyRoom={handleJoinFamilyRoom}
           onReactMessage={handleReactMessage}
+          onDeletePost={handleDeletePost}
+          onMarkViewOnceViewed={handleMarkViewOnceViewed}
+          onOpenRewind={handleOpenRewind}
           onOpenProfile={setSelectedProfileUser}
           onOpenVoiceRoom={setActiveVoiceRoom}
         />
@@ -982,10 +1264,15 @@ export default function App() {
           currentSession={authSession}
           connectors={appState.connectors || []}
           connectorPosts={connectorsStreaks}
+          timeCapsules={(appState.timeCapsules || []).filter((c) => c.targetAudience === "connectors" || c.targetAudience === "all")}
+          onRequestTimeCapsuleUnlock={handleRequestTimeCapsuleUnlock}
           onAddConnectorCode={handleAddConnectorCode}
           onLikePost={handleLikePost}
           onChangeConnectorCategory={handleChangeConnectorCategory}
           onAcceptRequest={handleAcceptConnectorRequest}
+          onDeletePost={handleDeletePost}
+          onMarkViewOnceViewed={handleMarkViewOnceViewed}
+          onOpenRewind={handleOpenRewind}
           onOpenProfile={setSelectedProfileUser}
           onOpenVoiceRoom={setActiveVoiceRoom}
         />
@@ -1000,6 +1287,9 @@ export default function App() {
             onCreatePost={handleCreatePost}
             onLikePost={handleLikePost}
             onCommentPost={handleCommentPost}
+            onDeletePost={handleDeletePost}
+            onMarkViewOnceViewed={handleMarkViewOnceViewed}
+            onOpenRewind={handleOpenRewind}
           />
         </div>
       )}
@@ -1011,6 +1301,7 @@ export default function App() {
           currentSession={authSession}
           onCreateCapsule={handleCreateTimeCapsule}
           onUnlockCapsule={handleUnlockTimeCapsule}
+          onRequestUnlock={handleRequestTimeCapsuleUnlock}
         />
       )}
 
@@ -1057,6 +1348,13 @@ export default function App() {
           onClose={() => setActiveVoiceRoom(null)}
         />
       )}
+
+      {/* "Ghar Rewind" Montage Modal (Chronological Daily Moments) */}
+      <GharRewindModal
+        isOpen={isRewindModalOpen}
+        onClose={() => setIsRewindModalOpen(false)}
+        moments={rewindMoments}
+      />
     </main>
   );
 
@@ -1083,6 +1381,7 @@ export default function App() {
         roomCode={appState.familyRoomCode || "GHAR-FAM-7182"}
         onOpenAuth={() => setIsAuthModalOpen(true)}
         onLockApp={() => setIsAppLocked(true)}
+        onOpenRewind={handleOpenRewind}
       />
 
       {/* Emergency SOS Panic Banner & Floating Button System */}

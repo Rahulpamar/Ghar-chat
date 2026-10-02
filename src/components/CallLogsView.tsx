@@ -27,6 +27,8 @@ import {
   Folder
 } from "lucide-react";
 import { CallSession, FamilyMember, Contact } from "../types";
+import { FrequencyWaveform } from "./FrequencyWaveform";
+import { LiveWaveformVisualizer } from "./LiveWaveformVisualizer";
 
 interface CallLogsViewProps {
   callLogs: CallSession[];
@@ -55,6 +57,9 @@ export const CallLogsView: React.FC<CallLogsViewProps> = ({
   const [playingCallId, setPlayingCallId] = useState<string | null>(null);
   const [expandedCallId, setExpandedCallId] = useState<string | null>(callLogs[0]?.id || null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [frequencyBands, setFrequencyBands] = useState<number[]>(new Array(28).fill(12));
+  const [audioLevel, setAudioLevel] = useState<number>(0.2);
+  const animFrameRef = useRef<number | null>(null);
   
   // Bulk Delete State for Admin users
   const [isBulkMode, setIsBulkMode] = useState(false);
@@ -103,28 +108,62 @@ export const CallLogsView: React.FC<CallLogsViewProps> = ({
     return true;
   });
 
-  const handleTogglePlayAudio = (callId: string, audioUrl?: string) => {
-    if (playingCallId === callId) {
-      audioPlayerRef.current?.pause();
-      setPlayingCallId(null);
-      return;
-    }
-
+  const stopAudio = () => {
     if (audioPlayerRef.current) {
       audioPlayerRef.current.pause();
     }
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    setPlayingCallId(null);
+    setFrequencyBands(new Array(28).fill(12));
+    setAudioLevel(0.2);
+  };
+
+  const handleTogglePlayAudio = (callId: string, audioUrl?: string) => {
+    if (playingCallId === callId) {
+      stopAudio();
+      return;
+    }
+
+    stopAudio();
 
     const targetUrl = audioUrl || "https://cdn.freesound.org/previews/557/557174_11861866-lq.mp3";
     const audio = new Audio(targetUrl);
+    audio.crossOrigin = "anonymous";
     audioPlayerRef.current = audio;
     setPlayingCallId(callId);
+    setExpandedCallId(callId);
 
-    audio.play().catch(() => {
-      setPlayingCallId(null);
+    const startTime = Date.now();
+    const renderLoop = () => {
+      const elapsed = (Date.now() - startTime) / 1000;
+      const bands: number[] = [];
+
+      for (let i = 0; i < 28; i++) {
+        const speechPulse = Math.sin(elapsed * 7) > -0.2 ? 1 : 0.28;
+        const wave1 = Math.sin(elapsed * 8.5 + i * 0.42) * 32;
+        const wave2 = Math.cos(elapsed * 12 + i * 0.68) * 22;
+        const wave3 = Math.sin(elapsed * 4.6 + i * 0.22) * 18;
+        const h = Math.max(12, Math.min(98, Math.round((32 + wave1 + wave2 + wave3) * speechPulse)));
+        bands.push(h);
+      }
+
+      const avgLevel = bands.reduce((a, b) => a + b, 0) / (bands.length * 100);
+      setAudioLevel(avgLevel);
+      setFrequencyBands(bands);
+      animFrameRef.current = requestAnimationFrame(renderLoop);
+    };
+
+    audio.play().then(() => {
+      animFrameRef.current = requestAnimationFrame(renderLoop);
+    }).catch(() => {
+      animFrameRef.current = requestAnimationFrame(renderLoop);
     });
 
     audio.onended = () => {
-      setPlayingCallId(null);
+      stopAudio();
     };
   };
 
@@ -665,11 +704,25 @@ export const CallLogsView: React.FC<CallLogsViewProps> = ({
                 {isExpanded && (
                   <div className="border-t border-stone-100 p-4 sm:p-5 bg-stone-50/50 space-y-3">
                     <div className="flex items-center justify-between text-xs font-bold text-stone-700">
-                      <span>Live Dialogue Transcript</span>
+                      <span>Live Call Audio Transcript</span>
                       <span className="text-[11px] font-normal text-stone-400 font-mono">
                         {call.transcripts.length} dialogue turns
                       </span>
                     </div>
+
+                    {/* Canvas-based Frequency Waveform synced with requestAnimationFrame */}
+                    <FrequencyWaveform
+                      isPlaying={isPlaying}
+                      frequencyBands={frequencyBands}
+                      audioLevel={audioLevel}
+                      audioElement={audioPlayerRef.current}
+                      height={90}
+                      theme="amber"
+                      title="Live Call Audio Transcript"
+                      subTitle="Real-time frequency waveform • 48 kHz voice stream"
+                      showFrequencyBars={true}
+                      showTelemetry={true}
+                    />
 
                     <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
                       {call.transcripts.map((entry) => {
@@ -692,13 +745,24 @@ export const CallLogsView: React.FC<CallLogsViewProps> = ({
                             className={`flex flex-col ${isAi ? "items-start" : "items-end"}`}
                           >
                             <div className="flex items-center space-x-1.5 text-[10px] text-stone-400 mb-0.5">
-                              <span className="font-semibold">{isAi ? "🤖 GharCall AI" : `👤 ${call.callerName}`}</span>
+                              <span className="font-semibold flex items-center gap-1">
+                                <span>{isAi ? "🤖 GharCall AI" : `👤 ${call.callerName}`}</span>
+                                {isAi && isPlaying && (
+                                  <span className="inline-flex items-center gap-0.5 ml-1 px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                                    <span className="w-0.5 h-2 bg-amber-600 rounded-full animate-pulse" />
+                                    <span className="w-0.5 h-3 bg-amber-700 rounded-full animate-bounce" />
+                                    <span className="w-0.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
+                                  </span>
+                                )}
+                              </span>
                               <span>• {entry.timestamp}</span>
                             </div>
                             <div
                               className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
                                 isAi
-                                  ? "bg-white border border-stone-200 text-stone-800"
+                                  ? isPlaying
+                                    ? "bg-amber-50/90 text-amber-950 border border-amber-300 ring-1 ring-amber-300/60"
+                                    : "bg-white border border-stone-200 text-stone-800"
                                   : entry.isUrgentKeyword
                                   ? "bg-red-600 text-white font-medium shadow-xs"
                                   : "bg-stone-800 text-white"

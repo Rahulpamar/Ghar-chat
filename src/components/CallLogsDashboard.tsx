@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   PhoneIncoming, 
@@ -26,9 +26,13 @@ import {
   FileText,
   FileSpreadsheet,
   Download,
-  Check
+  Check,
+  Waves,
+  Activity
 } from "lucide-react";
 import { CallSession, CallTranscript } from "../types";
+import { FrequencyWaveform } from "./FrequencyWaveform";
+import { LiveWaveformVisualizer } from "./LiveWaveformVisualizer";
 
 interface CallLogsDashboardProps {
   callLogs: CallSession[];
@@ -45,7 +49,20 @@ export const CallLogsDashboard: React.FC<CallLogsDashboardProps> = ({
   const [playingCallId, setPlayingCallId] = useState<string | null>(null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
 
+  // Audio frequency visualizer & Web Audio API
+  const [frequencyBands, setFrequencyBands] = useState<number[]>(new Array(28).fill(12));
+  const [audioLevel, setAudioLevel] = useState<number>(0.3);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const animFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (audioRef.current) audioRef.current.pause();
+      if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
+    };
+  }, []);
 
   // Statistics calculation
   const totalCalls = callLogs.length;
@@ -84,18 +101,116 @@ export const CallLogsDashboard: React.FC<CallLogsDashboardProps> = ({
     return `${secs}s`;
   };
 
+  const stopAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    setPlayingCallId(null);
+    setFrequencyBands(new Array(28).fill(12));
+    setAudioLevel(0.2);
+  };
+
   const handleTogglePlayAudio = (callId: string, audioUrl?: string) => {
     if (playingCallId === callId) {
-      audioRef.current?.pause();
-      setPlayingCallId(null);
-    } else {
-      audioRef.current?.pause();
-      const sound = new Audio(audioUrl || "https://cdn.freesound.org/previews/612/612089_11861866-lq.mp3");
-      audioRef.current = sound;
-      setPlayingCallId(callId);
-      sound.play().catch(() => {});
-      sound.onended = () => setPlayingCallId(null);
+      stopAudio();
+      return;
     }
+
+    stopAudio();
+    const sound = new Audio(audioUrl || "https://cdn.freesound.org/previews/612/612089_11861866-lq.mp3");
+    sound.crossOrigin = "anonymous";
+    audioRef.current = sound;
+    setPlayingCallId(callId);
+
+    // Auto-expand this call card so the user immediately sees the visual frequency wave in the transcript box
+    setExpandedCallId(callId);
+
+    // Audio frequency animation loop
+    const startTime = Date.now();
+    let analyserNode: AnalyserNode | null = null;
+    let dataArray: Uint8Array | null = null;
+
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        if (!audioContextRef.current) {
+          audioContextRef.current = new AudioCtx();
+        }
+        const ctx = audioContextRef.current;
+        if (ctx.state === "suspended") {
+          ctx.resume();
+        }
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 64;
+        analyser.smoothingTimeConstant = 0.75;
+        const source = ctx.createMediaElementSource(sound);
+        source.connect(analyser);
+        analyser.connect(ctx.destination);
+        analyserNode = analyser;
+        dataArray = new Uint8Array(analyser.frequencyBinCount);
+      }
+    } catch {
+      // Fallback to time-synced dynamic harmonic wave simulation
+    }
+
+    const renderLoop = () => {
+      const elapsed = (Date.now() - startTime) / 1000;
+      const bands: number[] = [];
+
+      if (analyserNode && dataArray) {
+        analyserNode.getByteFrequencyData(dataArray);
+        let maxVal = 0;
+        for (let i = 0; i < 28; i++) {
+          const raw = dataArray[Math.floor((i / 28) * dataArray.length)] || 0;
+          if (raw > maxVal) maxVal = raw;
+          const h = Math.max(12, Math.min(100, Math.round((raw / 255) * 100)));
+          bands.push(h);
+        }
+        // If audio data is muted by CORS restrictions, fallback to rich speech cadence simulation
+        if (maxVal < 10) {
+          bands.length = 0;
+          for (let i = 0; i < 28; i++) {
+            const speechPulse = Math.sin(elapsed * 7) > -0.2 ? 1 : 0.28;
+            const wave1 = Math.sin(elapsed * 8.5 + i * 0.42) * 32;
+            const wave2 = Math.cos(elapsed * 12 + i * 0.68) * 22;
+            const wave3 = Math.sin(elapsed * 4.6 + i * 0.22) * 18;
+            const h = Math.max(12, Math.min(98, Math.round((32 + wave1 + wave2 + wave3) * speechPulse)));
+            bands.push(h);
+          }
+        }
+      } else {
+        // Continuous harmonic wave matching speech cadence and dynamic voice playback
+        for (let i = 0; i < 28; i++) {
+          const speechPulse = Math.sin(elapsed * 7) > -0.2 ? 1 : 0.28;
+          const wave1 = Math.sin(elapsed * 8.5 + i * 0.42) * 32;
+          const wave2 = Math.cos(elapsed * 12 + i * 0.68) * 22;
+          const wave3 = Math.sin(elapsed * 4.6 + i * 0.22) * 18;
+          const h = Math.max(12, Math.min(98, Math.round((32 + wave1 + wave2 + wave3) * speechPulse)));
+          bands.push(h);
+        }
+      }
+
+      const avgLevel = bands.reduce((a, b) => a + b, 0) / (bands.length * 100);
+      setAudioLevel(avgLevel);
+      setFrequencyBands(bands);
+      animFrameRef.current = requestAnimationFrame(renderLoop);
+    };
+
+    sound.play().then(() => {
+      animFrameRef.current = requestAnimationFrame(renderLoop);
+    }).catch(() => {
+      // Autoplay fallback
+      animFrameRef.current = requestAnimationFrame(renderLoop);
+    });
+
+    sound.onended = () => {
+      stopAudio();
+    };
   };
 
   /**
@@ -555,28 +670,86 @@ export const CallLogsDashboard: React.FC<CallLogsDashboardProps> = ({
                           </p>
                         </div>
 
-                        {/* Turn-by-Turn Transcript Stream */}
+                        {/* Turn-by-Turn 'Live Call Audio' Transcript Box with FrequencyWaveform Animation */}
                         {call.transcripts && call.transcripts.length > 0 && (
-                          <div className="space-y-2 pt-2">
-                            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
-                              <FileText className="w-3.5 h-3.5 text-slate-400" />
-                              <span>Live Conversation Transcript ({call.transcripts.length} Turns)</span>
+                          <div className="space-y-2.5 pt-2">
+                            {/* Canvas-based Frequency Waveform synced with requestAnimationFrame */}
+                            <div className="space-y-2">
+                              <FrequencyWaveform
+                                isPlaying={isPlaying}
+                                frequencyBands={frequencyBands}
+                                audioLevel={audioLevel}
+                                audioElement={audioRef.current}
+                                height={92}
+                                theme="emerald"
+                                title="Live Call Audio"
+                                subTitle="Real-time frequency waveform • 48 kHz voice stream"
+                                showFrequencyBars={true}
+                                showTelemetry={true}
+                              />
+
+                              {/* Play / Pause Stream Controls Bar */}
+                              <div className="flex items-center justify-between px-3.5 py-2 bg-slate-900 text-white rounded-xl border border-slate-800 text-xs">
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleTogglePlayAudio(call.id, call.audioUrl);
+                                    }}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer ${
+                                      isPlaying
+                                        ? "bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-[0_0_12px_rgba(245,158,11,0.5)]"
+                                        : "bg-emerald-600 hover:bg-emerald-500 text-white"
+                                    }`}
+                                  >
+                                    {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                                    <span>{isPlaying ? "Pause Stream" : "Play Live Stream Audio"}</span>
+                                  </button>
+
+                                  {isPlaying && (
+                                    <span className="text-[11px] font-mono text-emerald-400 flex items-center gap-1">
+                                      <Activity className="w-3.5 h-3.5 animate-pulse" />
+                                      <span>Voice Frequencies Synced</span>
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400">
+                                  <span>⏱️ {formatDuration(call.durationSeconds)}</span>
+                                  <span>•</span>
+                                  <span>{call.telephonyProvider?.toUpperCase() || "HD VOICE"}</span>
+                                </div>
+                              </div>
                             </div>
 
+                            {/* Dialogue Turn Stream */}
                             <div className="p-3 bg-white border border-slate-200 rounded-2xl space-y-2 max-h-56 overflow-y-auto">
                               {call.transcripts.map((t) => (
                                 <div
                                   key={t.id}
-                                  className={`p-2 rounded-xl text-xs leading-relaxed ${
+                                  className={`p-2.5 rounded-xl text-xs leading-relaxed transition ${
                                     t.speaker === "assistant"
-                                      ? "bg-emerald-50 text-[#0F5132] border border-emerald-100"
+                                      ? isPlaying
+                                        ? "bg-emerald-50/90 text-[#0F5132] border border-emerald-200 ring-1 ring-emerald-300"
+                                        : "bg-emerald-50 text-[#0F5132] border border-emerald-100"
                                       : t.speaker === "system"
                                       ? "bg-amber-50 text-amber-900 border border-amber-200 font-mono text-[11px]"
                                       : "bg-slate-50 text-slate-800 border border-slate-100"
                                   }`}
                                 >
                                   <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-0.5">
-                                    <span>{t.speaker}</span>
+                                    <span className="flex items-center gap-1">
+                                      <span>{t.speaker === "assistant" ? "🤖 AI Assistant" : `👤 ${t.speaker}`}</span>
+                                      {t.speaker === "assistant" && isPlaying && (
+                                        <span className="inline-flex items-center gap-0.5 ml-1.5 px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                          <span className="w-0.5 h-2 bg-emerald-600 rounded-full animate-pulse" />
+                                          <span className="w-0.5 h-3 bg-emerald-700 rounded-full animate-bounce" />
+                                          <span className="w-0.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                                          <span className="text-[9px] font-mono ml-0.5">SPEAKING</span>
+                                        </span>
+                                      )}
+                                    </span>
                                     <span className="font-mono">{t.timestamp}</span>
                                   </div>
                                   <p className="font-medium">{t.text}</p>

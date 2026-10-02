@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Users, 
@@ -25,10 +25,20 @@ import {
   Radio,
   BookOpen,
   Smile,
-  ShieldCheck
+  ShieldCheck,
+  Trash2,
+  EyeOff,
+  Eye,
+  Mic,
+  Timer,
+  Hourglass,
+  Gift
 } from "lucide-react";
 import confetti from "canvas-confetti";
-import { Connector, SocialPost, UserAuthSession, ChatMessage } from "../types";
+import { Connector, SocialPost, UserAuthSession, ChatMessage, TimeCapsule } from "../types";
+import { SnapViewOnceModal } from "./SnapViewOnceModal";
+import { SealedTimeCapsuleBribeModal } from "./SealedTimeCapsuleBribeModal";
+import { SecureScreenProtectionLayer } from "./SecureScreenProtectionLayer";
 
 const QUICK_REACTIONS = ["❤️", "👍", "😂", "😮", "😢", "🙏"];
 const POPULAR_EMOJIS = ["😀", "😂", "❤️", "👍", "🔥", "🙏", "🎉", "☕", "🚀", "🏡", "✨", "💯"];
@@ -37,11 +47,16 @@ interface ConnectorsTabViewProps {
   currentSession: UserAuthSession;
   connectors: Connector[];
   connectorPosts: SocialPost[];
+  timeCapsules?: TimeCapsule[];
+  onRequestTimeCapsuleUnlock?: (capsuleId: string, message: string) => Promise<void>;
   onAddConnectorCode: (code: string) => Promise<boolean>;
   onLikePost: (postId: string) => void;
   onChangeConnectorCategory: (connectorId: string, newCategory: 'general' | 'private' | 'requests') => Promise<void>;
   onAcceptRequest?: (connectorId: string) => Promise<void>;
   onSendDirectMessage?: (connector: Connector, text: string) => void;
+  onDeletePost?: (postId: string) => void;
+  onMarkViewOnceViewed?: (postId: string) => void;
+  onOpenRewind?: () => void;
   onOpenProfile?: (user: {
     id: string;
     name: string;
@@ -108,11 +123,16 @@ export const ConnectorsTabView: React.FC<ConnectorsTabViewProps> = ({
   currentSession,
   connectors,
   connectorPosts,
+  timeCapsules = [],
+  onRequestTimeCapsuleUnlock,
   onAddConnectorCode,
   onLikePost,
   onChangeConnectorCategory,
   onAcceptRequest,
   onSendDirectMessage,
+  onDeletePost,
+  onMarkViewOnceViewed,
+  onOpenRewind,
   onOpenProfile,
   onOpenVoiceRoom,
 }) => {
@@ -140,6 +160,15 @@ export const ConnectorsTabView: React.FC<ConnectorsTabViewProps> = ({
   const [enteredPin, setEnteredPin] = useState("");
   const [pinError, setPinError] = useState("");
 
+  // Snap View-Once Modal & Time Capsule Bribe Modal
+  const [snapViewingPost, setSnapViewingPost] = useState<SocialPost | null>(null);
+  const [bribingCapsule, setBribingCapsule] = useState<TimeCapsule | null>(null);
+
+  // Direct Audio Note / Secret Vault Voice Drop Recording
+  const [isRecordingDirectVoice, setIsRecordingDirectVoice] = useState(false);
+  const [directVoiceDuration, setDirectVoiceDuration] = useState(0);
+  const directVoiceTimerRef = useRef<any>(null);
+
   // Direct Chat Reactions & Context Menu
   const [directMessageReactions, setDirectMessageReactions] = useState<Record<string, Record<string, number>>>({
     "dm-1": { "☕": 2, "❤️": 1 },
@@ -152,7 +181,7 @@ export const ConnectorsTabView: React.FC<ConnectorsTabViewProps> = ({
   // Active Direct Chat Modal
   const [activeChatConnector, setActiveChatConnector] = useState<Connector | null>(null);
   const [directInputText, setDirectInputText] = useState("");
-  const [directMessages, setDirectMessages] = useState<Record<string, Array<{ id: string; sender: string; text: string; time: string }>>>({
+  const [directMessages, setDirectMessages] = useState<Record<string, Array<{ id: string; sender: string; text: string; time: string; isVoice?: boolean; voiceDuration?: number; isPrivate?: boolean }>>>({
     "conn-1": [
       { id: "dm-1", sender: "Ananya Rao", text: "Hey Rahul! Checking out that new coffee spot in Uppal.", time: "10:15 AM" },
       { id: "dm-2", sender: "me", text: "Awesome! The filter roast is really good there.", time: "10:18 AM" },
@@ -308,6 +337,52 @@ export const ConnectorsTabView: React.FC<ConnectorsTabViewProps> = ({
     setDirectInputText("");
   };
 
+  // Direct Audio Recording Handlers (Secret Vault Voice Drops)
+  const handleStartDirectVoice = () => {
+    setIsRecordingDirectVoice(true);
+    setDirectVoiceDuration(0);
+    directVoiceTimerRef.current = setInterval(() => {
+      setDirectVoiceDuration((prev) => prev + 1);
+    }, 1000);
+  };
+
+  const handleCompleteDirectVoice = (isSecretVault: boolean = false) => {
+    if (directVoiceTimerRef.current) clearInterval(directVoiceTimerRef.current);
+    setIsRecordingDirectVoice(false);
+    if (!activeChatConnector) return;
+
+    const duration = Math.max(2, directVoiceDuration || 4);
+    const newMsg = {
+      id: `dm-${Date.now()}`,
+      sender: "me",
+      text: isSecretVault ? `🔐 Secret Vault Voice Drop (${duration}s)` : `Voice Note (${duration}s)`,
+      time: "Just now",
+      isVoice: true,
+      voiceDuration: duration,
+      isPrivate: isSecretVault,
+    };
+
+    setDirectMessages((prev) => ({
+      ...prev,
+      [activeChatConnector.id]: [...(prev[activeChatConnector.id] || []), newMsg],
+    }));
+
+    if (onSendDirectMessage) {
+      onSendDirectMessage(activeChatConnector, newMsg.text);
+    }
+
+    setDirectVoiceDuration(0);
+    if (isSecretVault) {
+      confetti({ particleCount: 35, spread: 50 });
+    }
+  };
+
+  const handleCancelDirectVoice = () => {
+    if (directVoiceTimerRef.current) clearInterval(directVoiceTimerRef.current);
+    setIsRecordingDirectVoice(false);
+    setDirectVoiceDuration(0);
+  };
+
   const renderConnectorRow = (c: Connector, currentCat: 'general' | 'private') => {
     return (
       <div
@@ -350,17 +425,16 @@ export const ConnectorsTabView: React.FC<ConnectorsTabViewProps> = ({
               {c.lastMessage || c.recentStatusNote || "Active on Ghar"}
             </p>
 
-            {/* VIBE MATCH INDICATOR */}
+            {/* VIBE STREAK & MATCH INDICATOR */}
             <div className="flex items-center gap-2 mt-1">
+              <span className="text-[10px] font-black text-amber-800 bg-amber-50 border border-amber-200/90 px-2 py-0.5 rounded-full flex items-center gap-1 shadow-2xs">
+                <Flame className="w-3 h-3 text-amber-500 fill-amber-500 animate-bounce" />
+                <span>🔥 {c.streakCount || 14}d Vibe Streak</span>
+              </span>
               <span className="text-[10px] font-black text-[#0F5132] bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-full flex items-center gap-1">
                 <Zap className="w-2.5 h-2.5 text-amber-500 fill-amber-500" />
-                Vibe Match: {c.vibeMatch || 92}%
+                {c.vibeMatch || 92}% Match
               </span>
-              {c.vibeHighlights && c.vibeHighlights[0] && (
-                <span className="text-[10px] text-slate-400 truncate max-w-[150px]">
-                  {c.vibeHighlights[0]}
-                </span>
-              )}
             </div>
           </div>
         </div>
@@ -895,9 +969,131 @@ export const ConnectorsTabView: React.FC<ConnectorsTabViewProps> = ({
       {mainView === "streaks" && (
         <div className="space-y-6">
           <div className="bg-emerald-50/70 border border-emerald-200 p-3.5 rounded-2xl flex items-center justify-between text-xs text-emerald-900 font-semibold">
-            <span>🔥 Dedicated Connectors Social Stream: Photos, outing notes & daily quotes.</span>
-            <span className="text-[#0F5132] font-bold font-mono">{filteredStreaks.length} Posts</span>
+            <div className="flex items-center gap-2">
+              <span>🔥 Dedicated Connectors Social Stream: Photos, outing notes & daily quotes.</span>
+              <span className="text-[#0F5132] font-bold font-mono">({filteredStreaks.length} Posts)</span>
+            </div>
+            {onOpenRewind && (
+              <button
+                type="button"
+                onClick={onOpenRewind}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-[#0F5132] via-emerald-600 to-amber-500 text-white text-xs font-bold shadow-xs hover:scale-105 active:scale-95 transition cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-spin" />
+                <span>Ghar Rewind</span>
+              </button>
+            )}
           </div>
+
+          {/* SEALED TIME CAPSULES WITH VISUAL LOCK SEAL & BRIBE TRIGGER */}
+          {timeCapsules.length > 0 && (
+            <div className="bg-amber-50/70 border border-amber-200/80 rounded-3xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 rounded-xl bg-amber-500/20 text-amber-700">
+                    <Hourglass className="w-4 h-4 stroke-[2.5]" />
+                  </span>
+                  <div>
+                    <h4 className="text-xs font-black text-amber-950 uppercase tracking-wider">
+                      Connectors Time Capsules ({timeCapsules.length})
+                    </h4>
+                    <span className="text-[10px] text-amber-800">
+                      Tap lock to bribe the owner and unlock early!
+                    </span>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold bg-amber-200/60 text-amber-900 px-2 py-0.5 rounded-full">
+                  🔒 Sealed Vault
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {timeCapsules.map((capsule) => {
+                  const isReady = new Date(capsule.unlockDate) <= new Date() || capsule.isUnlocked;
+                  const isUnlockedForMe = isReady || capsule.unlockedForUsers?.includes(currentSession.userCode);
+                  const isAuthor = capsule.authorCode === currentSession.userCode || capsule.authorId === currentSession.userCode;
+
+                  return (
+                    <div
+                      key={capsule.id}
+                      onClick={() => {
+                        if (!isUnlockedForMe && !isAuthor) {
+                          setBribingCapsule(capsule);
+                        }
+                      }}
+                      className="bg-white rounded-2xl border border-amber-200 p-3 shadow-xs hover:shadow-md transition cursor-pointer group space-y-2"
+                    >
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-bold text-slate-900 truncate max-w-[140px] group-hover:text-amber-800 transition">
+                          {capsule.title}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 font-mono text-[10px] font-bold">
+                          {capsule.occasionTag}
+                        </span>
+                      </div>
+
+                      {/* Photo with prominent visual lock seal icon */}
+                      {capsule.photoUrl && (
+                        <div className="relative aspect-video rounded-xl overflow-hidden bg-slate-950">
+                          {isUnlockedForMe ? (
+                            <SecureScreenProtectionLayer
+                              userCode={currentSession.userCode}
+                              mediaTitle={capsule.title}
+                              className="w-full h-full"
+                            >
+                              <img
+                                src={capsule.photoUrl}
+                                alt="Unlocked capsule"
+                                className="w-full h-full object-cover select-none pointer-events-none"
+                                draggable={false}
+                              />
+                            </SecureScreenProtectionLayer>
+                          ) : (
+                            <>
+                              <img
+                                src={capsule.photoUrl}
+                                alt="Sealed capsule"
+                                className="w-full h-full object-cover filter blur-md scale-105 opacity-60"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/30 flex flex-col items-center justify-center p-2 text-center text-white">
+                                <div className="relative mb-1">
+                                  <div className="absolute -inset-1.5 bg-amber-400 rounded-full blur-xs opacity-60 animate-pulse" />
+                                  <div className="relative w-10 h-10 rounded-full bg-gradient-to-tr from-amber-500 via-amber-400 to-yellow-300 text-amber-950 flex items-center justify-center shadow-lg border-2 border-white">
+                                    <Lock className="w-5 h-5 stroke-[2.5]" />
+                                  </div>
+                                </div>
+                                <span className="text-[10px] font-black uppercase tracking-wider text-amber-300">
+                                  Visual Lock Seal
+                                </span>
+                                <span className="text-[9px] text-amber-100 font-bold bg-white/20 backdrop-blur-xs px-2 py-0.5 rounded-full border border-white/30 mt-0.5">
+                                  🎁 Tap to Bribe Owner
+                                </span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between text-[10px] text-slate-500 pt-0.5 border-t border-slate-100">
+                        <span>By {capsule.authorName}</span>
+                        {isUnlockedForMe ? (
+                          <span className="text-emerald-700 font-bold flex items-center gap-0.5">
+                            <Unlock className="w-3 h-3 text-emerald-600" />
+                            <span>Unlocked</span>
+                          </span>
+                        ) : (
+                          <span className="text-amber-800 font-bold flex items-center gap-0.5">
+                            <Lock className="w-3 h-3 text-amber-600" />
+                            <span>Sealed</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {filteredStreaks.length === 0 ? (
             <div className="bg-[#FFFFFF] rounded-3xl border border-slate-200 p-10 text-center space-y-2">
@@ -908,82 +1104,146 @@ export const ConnectorsTabView: React.FC<ConnectorsTabViewProps> = ({
               </p>
             </div>
           ) : (
-            filteredStreaks.map((post) => (
-              <motion.article
-                key={post.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-[#FFFFFF] rounded-3xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-md transition"
-              >
-                {/* Author Bar */}
-                <div className="p-4 flex items-center justify-between border-b border-slate-100">
-                  <div className="flex items-center gap-3">
-                    <img
-                      src={post.authorAvatar}
-                      alt={post.authorName}
-                      className="w-10 h-10 rounded-full object-cover border border-slate-200"
-                    />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-xs font-bold text-slate-900">{post.authorName}</h4>
-                        <span className="text-[10px] font-mono px-2 py-0.2 bg-[#0F5132]/10 text-[#0F5132] font-semibold rounded-full">
-                          {post.authorCode}
-                        </span>
+            filteredStreaks.map((post) => {
+              const isAuthor = post.authorCode === currentSession.userCode || post.authorId === currentSession.userCode;
+              const hasViewedOnce = post.isViewOnce && post.disappearedFor?.includes(currentSession.userCode);
+              const isUnviewedSnap = post.isViewOnce && !isAuthor && !hasViewedOnce;
+
+              return (
+                <motion.article
+                  key={post.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-[#FFFFFF] rounded-3xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-md transition"
+                >
+                  {/* Author Bar */}
+                  <div className="p-4 flex items-center justify-between border-b border-slate-100">
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={post.authorAvatar}
+                        alt={post.authorName}
+                        className="w-10 h-10 rounded-full object-cover border border-slate-200"
+                      />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-bold text-slate-900">{post.authorName}</h4>
+                          <span className="text-[10px] font-mono px-2 py-0.2 bg-[#0F5132]/10 text-[#0F5132] font-semibold rounded-full">
+                            {post.authorCode}
+                          </span>
+                          {post.isViewOnce && (
+                            <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200 text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
+                              <EyeOff className="w-3 h-3 text-amber-700" />
+                              View-Once
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 text-[11px] text-slate-400">
+                          <MapPin className="w-3 h-3 text-slate-400" />
+                          <span>{post.locationTag || "Hyderabad"}</span>
+                          <span>•</span>
+                          <span>{new Date(post.createdAt).toLocaleDateString()}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1 text-[11px] text-slate-400">
-                        <MapPin className="w-3 h-3 text-slate-400" />
-                        <span>{post.locationTag || "Hyderabad"}</span>
-                        <span>•</span>
-                        <span>{new Date(post.createdAt).toLocaleDateString()}</span>
-                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 text-xs font-bold border border-amber-200 flex items-center gap-1">
+                        🔥 {post.streakCount}d
+                      </span>
+
+                      {/* Instant Delete Streak Option for Author */}
+                      {isAuthor && onDeletePost && (
+                        <button
+                          type="button"
+                          onClick={() => onDeletePost(post.id)}
+                          className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                          title="Delete this streak permanently"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
 
-                  <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 text-xs font-bold border border-amber-200 flex items-center gap-1">
-                    🔥 {post.streakCount}d
-                  </span>
-                </div>
-
-                {/* Media */}
-                {post.photoUrl && (
-                  <div className="relative aspect-video max-h-[380px] bg-slate-950 overflow-hidden">
-                    <img
-                      src={post.photoUrl}
-                      alt="Connector update"
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                )}
-
-                {/* Content */}
-                <div className="p-4 space-y-3">
-                  <p className="text-xs sm:text-sm text-slate-800 leading-relaxed font-normal">
-                    {post.note}
-                  </p>
-
-                  {post.quote && (
-                    <div className="p-3 rounded-2xl bg-slate-50 border-l-4 border-[#0F5132] text-xs italic text-slate-700 flex items-start gap-2">
-                      <Quote className="w-3.5 h-3.5 text-[#0F5132] shrink-0 mt-0.5" />
-                      <span>"{post.quote}"</span>
+                  {/* Media: View-Once Disappeared vs Unviewed Snap vs Normal Photo */}
+                  {hasViewedOnce ? (
+                    <div className="p-8 aspect-video max-h-[380px] bg-slate-900 flex flex-col items-center justify-center text-center space-y-2 text-white">
+                      <div className="w-12 h-12 rounded-2xl bg-slate-800 text-amber-400 flex items-center justify-center border border-slate-700 shadow-xs">
+                        <EyeOff className="w-6 h-6 animate-pulse" />
+                      </div>
+                      <h4 className="text-xs font-bold text-amber-300">View-Once Media Disappeared</h4>
+                      <p className="text-[11px] text-slate-400 max-w-xs">
+                        You opened this connector streak and it permanently self-destructed.
+                      </p>
                     </div>
-                  )}
-
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                    <button
-                      onClick={() => onLikePost(post.id)}
-                      className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-rose-600 transition cursor-pointer"
+                  ) : isUnviewedSnap ? (
+                    <div
+                      onClick={() => setSnapViewingPost(post)}
+                      className="relative aspect-video max-h-[380px] bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950/70 flex flex-col items-center justify-center p-6 text-center text-white cursor-pointer group hover:border-amber-500/50 transition overflow-hidden"
                     >
-                      <Heart className="w-4 h-4 hover:fill-rose-500" />
-                      <span>{post.likes?.length || 0} Likes</span>
-                    </button>
+                      <div className="w-14 h-14 rounded-3xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/40 group-hover:scale-110 transition shadow-lg mb-2">
+                        <Flame className="w-8 h-8 animate-bounce text-amber-400" />
+                      </div>
+                      <div className="space-y-1">
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/30 text-[10px] font-black uppercase tracking-wider">
+                          Snapchat Style
+                        </span>
+                        <h4 className="text-sm font-black text-white">1-Time View-Once Streak</h4>
+                        <p className="text-xs text-slate-300">Tap to open • {post.viewDurationSeconds || 7}s timer before self-destruct</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="mt-3 px-4 py-1.5 rounded-full bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black shadow-md transition cursor-pointer"
+                      >
+                        Tap to Open 🔥
+                      </button>
+                    </div>
+                  ) : post.photoUrl ? (
+                    <div className="relative aspect-video max-h-[380px] bg-slate-950 overflow-hidden">
+                      <img
+                        src={post.photoUrl}
+                        alt="Connector update"
+                        className="w-full h-full object-cover"
+                      />
+                      {post.isViewOnce && isAuthor && (
+                        <div className="absolute top-3 left-3 px-2.5 py-1 rounded-xl bg-black/75 backdrop-blur-xs border border-amber-400/40 text-amber-300 text-[10px] font-bold flex items-center gap-1.5 shadow-md">
+                          <Eye className="w-3.5 h-3.5 text-amber-400" />
+                          <span>View-Once • Opened by {post.viewedBy?.length || 0}</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
 
-                    <span className="text-[11px] text-slate-400">
-                      Shared to Connectors Feed
-                    </span>
+                  {/* Content */}
+                  <div className="p-4 space-y-3">
+                    <p className="text-xs sm:text-sm text-slate-800 leading-relaxed font-normal">
+                      {post.note}
+                    </p>
+
+                    {post.quote && (
+                      <div className="p-3 rounded-2xl bg-slate-50 border-l-4 border-[#0F5132] text-xs italic text-slate-700 flex items-start gap-2">
+                        <Quote className="w-3.5 h-3.5 text-[#0F5132] shrink-0 mt-0.5" />
+                        <span>"{post.quote}"</span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                      <button
+                        onClick={() => onLikePost(post.id)}
+                        className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-rose-600 transition cursor-pointer"
+                      >
+                        <Heart className="w-4 h-4 hover:fill-rose-500" />
+                        <span>{post.likes?.length || 0} Likes</span>
+                      </button>
+
+                      <span className="text-[11px] text-slate-400">
+                        Shared to Connectors Feed
+                      </span>
+                    </div>
                   </div>
-                </div>
-              </motion.article>
-            ))
+                </motion.article>
+              );
+            })
           )}
         </div>
       )}
@@ -1105,12 +1365,17 @@ export const ConnectorsTabView: React.FC<ConnectorsTabViewProps> = ({
                       </span>
                     </div>
 
-                    {/* VIBE MATCH BAR */}
+                    {/* VIBE STREAK & MATCH BAR */}
                     <div className="flex items-center gap-1.5 text-[10px] text-emerald-800 font-bold mt-0.5">
-                      <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
-                      <span>{activeChatConnector.vibeMatch || 92}% Vibe Match</span>
+                      <span className="flex items-center gap-1 text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded-md font-black">
+                        <Flame className="w-3 h-3 text-amber-500 fill-amber-500 animate-bounce" />
+                        <span>🔥 {activeChatConnector.streakCount || 14}d Vibe Streak</span>
+                      </span>
                       <span>•</span>
-                      <span className="text-slate-400 font-normal">{activeChatConnector.relationship}</span>
+                      <span className="flex items-center gap-1">
+                        <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
+                        <span>{activeChatConnector.vibeMatch || 92}% Match</span>
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1240,34 +1505,94 @@ export const ConnectorsTabView: React.FC<ConnectorsTabViewProps> = ({
                 )}
               </AnimatePresence>
 
-              {/* Message Input */}
-              <form onSubmit={handleSendDirect} className="p-3 bg-white border-t border-slate-200 flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setShowDirectEmojis(!showDirectEmojis)}
-                  className={`p-2 rounded-full transition cursor-pointer ${
-                    showDirectEmojis ? "bg-amber-100 text-amber-800" : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-                  }`}
-                  title="Emoji & Stickers"
-                >
-                  <Smile className="w-5 h-5" />
-                </button>
+              {/* Message Input Bar with Embedded Secret Vault Voice Drops */}
+              {isRecordingDirectVoice ? (
+                <div className="p-3 bg-gradient-to-r from-rose-50 via-amber-50 to-emerald-50 border-t border-rose-200 flex items-center justify-between gap-2 shrink-0 animate-fadeIn">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping" />
+                    <span className="text-xs font-bold text-rose-900 flex items-center gap-1">
+                      <Mic className="w-4 h-4 text-rose-600 animate-pulse" />
+                      Recording Voice Note ({directVoiceDuration}s)
+                    </span>
+                  </div>
 
-                <input
-                  type="text"
-                  placeholder={`Message ${activeChatConnector.name.split(" ")[0]}...`}
-                  value={directInputText}
-                  onChange={(e) => setDirectInputText(e.target.value)}
-                  className="flex-1 px-4 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-hidden focus:ring-2 focus:ring-[#0F5132] text-slate-900 placeholder:text-slate-400"
-                />
-                <button
-                  type="submit"
-                  disabled={!directInputText.trim()}
-                  className="w-10 h-10 rounded-2xl bg-[#0F5132] hover:bg-[#0c4128] disabled:opacity-40 text-white flex items-center justify-center transition shadow-xs cursor-pointer shrink-0"
-                >
-                  <Send className="w-4 h-4 ml-0.5" />
-                </button>
-              </form>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={handleCancelDirectVoice}
+                      className="px-2.5 py-1.5 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100 transition cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleCompleteDirectVoice(false)}
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition cursor-pointer flex items-center gap-1"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Send</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleCompleteDirectVoice(true)}
+                      className="px-3 py-1.5 rounded-xl bg-[#0F5132] hover:bg-[#0c4128] text-white font-bold text-xs transition cursor-pointer flex items-center gap-1 shadow-xs"
+                      title="Directly drop into PIN-protected Secret Vault"
+                    >
+                      <Lock className="w-3.5 h-3.5 text-amber-300" />
+                      <span>🔐 Vault Drop</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleSendDirect} className="p-3 bg-white border-t border-slate-200 flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowDirectEmojis(!showDirectEmojis)}
+                    className={`p-2 rounded-full transition cursor-pointer ${
+                      showDirectEmojis ? "bg-amber-100 text-amber-800" : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                    }`}
+                    title="Emoji & Stickers"
+                  >
+                    <Smile className="w-5 h-5" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleStartDirectVoice}
+                    className="p-2 text-slate-400 hover:text-slate-700 rounded-full hover:bg-slate-100 transition cursor-pointer"
+                    title="Record Voice Drop"
+                  >
+                    <Mic className="w-5 h-5" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleStartDirectVoice}
+                    className="px-2 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shrink-0"
+                    title="Secret Vault Voice Drop"
+                  >
+                    <Lock className="w-3 h-3 text-amber-700" />
+                    <span className="hidden sm:inline">Vault Drop</span>
+                  </button>
+
+                  <input
+                    type="text"
+                    placeholder={`Message ${activeChatConnector.name.split(" ")[0]}...`}
+                    value={directInputText}
+                    onChange={(e) => setDirectInputText(e.target.value)}
+                    className="flex-1 px-4 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-hidden focus:ring-2 focus:ring-[#0F5132] text-slate-900 placeholder:text-slate-400"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!directInputText.trim()}
+                    className="w-10 h-10 rounded-2xl bg-[#0F5132] hover:bg-[#0c4128] disabled:opacity-40 text-white flex items-center justify-center transition shadow-xs cursor-pointer shrink-0"
+                  >
+                    <Send className="w-4 h-4 ml-0.5" />
+                  </button>
+                </form>
+              )}
             </motion.div>
           </div>
         )}
@@ -1360,6 +1685,31 @@ export const ConnectorsTabView: React.FC<ConnectorsTabViewProps> = ({
           </div>
         )}
       </AnimatePresence>
+
+      {/* SNAPCHAT-STYLE 1-TIME VIEW-ONCE MODAL */}
+      <SnapViewOnceModal
+        post={snapViewingPost}
+        isOpen={!!snapViewingPost}
+        onClose={() => setSnapViewingPost(null)}
+        onSelfDestruct={(postId) => {
+          if (onMarkViewOnceViewed) {
+            onMarkViewOnceViewed(postId);
+          }
+        }}
+      />
+
+      {/* SEALED TIME CAPSULE & BRIBE MODAL */}
+      <SealedTimeCapsuleBribeModal
+        isOpen={!!bribingCapsule}
+        capsule={bribingCapsule}
+        currentSession={currentSession}
+        onClose={() => setBribingCapsule(null)}
+        onSubmitBribe={async (capsuleId, message) => {
+          if (onRequestTimeCapsuleUnlock) {
+            await onRequestTimeCapsuleUnlock(capsuleId, message);
+          }
+        }}
+      />
     </div>
   );
 };

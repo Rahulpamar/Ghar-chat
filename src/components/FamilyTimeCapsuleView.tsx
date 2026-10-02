@@ -16,17 +16,21 @@ import {
   Users, 
   Flame, 
   Upload, 
-  Loader2 
+  Loader2,
+  Gift 
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { TimeCapsule, UserAuthSession } from "../types";
 import { uploadCompressedMedia } from "../lib/firebase";
+import { SecureScreenProtectionLayer } from "./SecureScreenProtectionLayer";
+import { SealedTimeCapsuleBribeModal } from "./SealedTimeCapsuleBribeModal";
 
 interface FamilyTimeCapsuleViewProps {
   capsules: TimeCapsule[];
   currentSession: UserAuthSession;
   onCreateCapsule: (capsule: Omit<TimeCapsule, "id" | "createdAt" | "isUnlocked">) => Promise<void>;
   onUnlockCapsule?: (capsuleId: string) => Promise<void>;
+  onRequestUnlock?: (capsuleId: string, message: string) => Promise<void>;
 }
 
 const OCCASIONS = [
@@ -42,10 +46,12 @@ export const FamilyTimeCapsuleView: React.FC<FamilyTimeCapsuleViewProps> = ({
   currentSession,
   onCreateCapsule,
   onUnlockCapsule,
+  onRequestUnlock,
 }) => {
   const [filter, setFilter] = useState<"all" | "locked" | "unlocked">("all");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedCapsule, setSelectedCapsule] = useState<TimeCapsule | null>(null);
+  const [bribingCapsule, setBribingCapsule] = useState<TimeCapsule | null>(null);
 
   // Create Capsule Form State
   const [title, setTitle] = useState("");
@@ -121,8 +127,16 @@ export const FamilyTimeCapsuleView: React.FC<FamilyTimeCapsuleViewProps> = ({
   };
 
   const handleOpenCapsule = (capsule: TimeCapsule) => {
-    setSelectedCapsule(capsule);
     const isReady = new Date(capsule.unlockDate) <= new Date() || capsule.isUnlocked;
+    const isUnlockedForMe = isReady || capsule.unlockedForUsers?.includes(currentSession.userCode);
+    const isAuthor = capsule.authorCode === currentSession.userCode || capsule.authorId === currentSession.userCode;
+
+    if (!isUnlockedForMe && !isAuthor) {
+      setBribingCapsule(capsule);
+      return;
+    }
+
+    setSelectedCapsule(capsule);
     if (isReady) {
       confetti({ particleCount: 100, spread: 90, origin: { y: 0.5 } });
       if (onUnlockCapsule && !capsule.isUnlocked) {
@@ -210,7 +224,8 @@ export const FamilyTimeCapsuleView: React.FC<FamilyTimeCapsuleViewProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredCapsules.map((capsule) => {
             const timeLeft = calculateTimeLeft(capsule.unlockDate);
-            const isUnlocked = capsule.isUnlocked || timeLeft.expired;
+            const isReady = timeLeft.expired || capsule.isUnlocked;
+            const isUnlockedForMe = isReady || capsule.unlockedForUsers?.includes(currentSession.userCode);
 
             return (
               <motion.div
@@ -218,7 +233,7 @@ export const FamilyTimeCapsuleView: React.FC<FamilyTimeCapsuleViewProps> = ({
                 whileHover={{ y: -3 }}
                 onClick={() => handleOpenCapsule(capsule)}
                 className={`rounded-3xl border p-5 cursor-pointer relative overflow-hidden transition flex flex-col justify-between ${
-                  isUnlocked
+                  isUnlockedForMe
                     ? "bg-gradient-to-b from-amber-50/50 via-white to-white border-amber-200 shadow-sm hover:border-amber-400"
                     : "bg-[#FFFFFF] border-slate-200 shadow-xs hover:border-[#0F5132]/50 hover:shadow-md"
                 }`}
@@ -229,7 +244,7 @@ export const FamilyTimeCapsuleView: React.FC<FamilyTimeCapsuleViewProps> = ({
                     {capsule.occasionTag}
                   </span>
 
-                  {isUnlocked ? (
+                  {isUnlockedForMe ? (
                     <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-bold border border-emerald-200 flex items-center gap-1">
                       <Unlock className="w-3 h-3 text-emerald-600" />
                       <span>Unlocked 🎉</span>
@@ -246,23 +261,33 @@ export const FamilyTimeCapsuleView: React.FC<FamilyTimeCapsuleViewProps> = ({
                 <div className="py-4 space-y-2.5 flex-1">
                   <h3 className="text-sm font-black text-slate-900 line-clamp-1">{capsule.title}</h3>
                   <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
-                    {isUnlocked ? capsule.description : "🔒 Content sealed until unlock date. Tap to view countdown details."}
+                    {isUnlockedForMe ? capsule.description : "🔒 Content sealed until unlock date. Tap to send a bribe & request early unlock!"}
                   </p>
 
-                  {/* Thumbnail Preview */}
+                  {/* Thumbnail Preview with Prominent Lock Seal */}
                   {capsule.photoUrl && (
-                    <div className="relative aspect-video rounded-2xl overflow-hidden mt-3 bg-slate-900">
+                    <div className="relative aspect-video rounded-2xl overflow-hidden mt-3 bg-slate-950">
                       <img
                         src={capsule.photoUrl}
                         alt="Time capsule"
                         className={`w-full h-full object-cover transition duration-300 ${
-                          isUnlocked ? "" : "blur-md scale-105 opacity-60"
+                          isUnlockedForMe ? "" : "filter blur-md scale-105 opacity-60"
                         }`}
                       />
-                      {!isUnlocked && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-2">
-                          <Lock className="w-6 h-6 text-amber-300 mb-1" />
-                          <span className="text-[10px] font-bold uppercase tracking-wider">Photo Sealed</span>
+                      {!isUnlockedForMe && (
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/30 flex flex-col items-center justify-center text-white p-3 text-center">
+                          <div className="relative mb-1.5">
+                            <div className="absolute -inset-1.5 bg-amber-400 rounded-full blur-xs opacity-60 animate-pulse" />
+                            <div className="relative w-11 h-11 rounded-full bg-gradient-to-tr from-amber-500 via-amber-400 to-yellow-300 text-amber-950 flex items-center justify-center shadow-lg border-2 border-white">
+                              <Lock className="w-5 h-5 stroke-[2.5]" />
+                            </div>
+                          </div>
+                          <span className="text-[11px] font-black uppercase tracking-wider text-amber-300">
+                            Sealed Memory Vault
+                          </span>
+                          <span className="text-[10px] text-slate-200 mt-1 bg-white/20 backdrop-blur-xs px-2.5 py-0.5 rounded-full border border-white/30 font-bold">
+                            🎁 Tap to Bribe & Unlock
+                          </span>
                         </div>
                       )}
                     </div>
@@ -509,21 +534,26 @@ export const FamilyTimeCapsuleView: React.FC<FamilyTimeCapsuleViewProps> = ({
                     <h3 className="text-lg font-black text-slate-900">{selectedCapsule.title}</h3>
 
                     {isReady ? (
-                      /* Unlocked Content View */
+                      /* Unlocked Content View with Native FLAG_SECURE Protection */
                       <div className="space-y-3">
                         <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200 text-amber-900 text-xs font-semibold flex items-center gap-2">
                           <PartyPopper className="w-4 h-4 text-amber-600 shrink-0" />
-                          <span>This capsule is unlocked! Share the joy with family.</span>
+                          <span>This capsule is unlocked! Protected with FLAG_SECURE screen anti-capture.</span>
                         </div>
 
                         {selectedCapsule.photoUrl && (
-                          <div className="rounded-2xl overflow-hidden aspect-video bg-slate-950 shadow-xs">
+                          <SecureScreenProtectionLayer
+                            userCode={currentSession.userCode}
+                            mediaTitle={selectedCapsule.title}
+                            className="rounded-2xl overflow-hidden aspect-video bg-slate-950 shadow-xs"
+                          >
                             <img
                               src={selectedCapsule.photoUrl}
                               alt="Unlocked capsule"
-                              className="w-full h-full object-cover"
+                              className="w-full h-full object-cover select-none pointer-events-none"
+                              draggable={false}
                             />
-                          </div>
+                          </SecureScreenProtectionLayer>
                         )}
 
                         <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-800 leading-relaxed font-normal">
@@ -552,21 +582,40 @@ export const FamilyTimeCapsuleView: React.FC<FamilyTimeCapsuleViewProps> = ({
                         </div>
                       </div>
                     ) : (
-                      /* Locked Countdown View */
+                      /* Locked Countdown View with Bribe Trigger */
                       <div className="text-center py-6 space-y-4">
-                        <div className="w-20 h-20 rounded-full bg-amber-50 border-2 border-amber-300 text-amber-600 flex items-center justify-center mx-auto shadow-inner">
-                          <Lock className="w-10 h-10 animate-bounce" />
+                        <div className="relative inline-block mx-auto">
+                          <div className="absolute -inset-2 bg-amber-400 rounded-full blur-sm opacity-50 animate-pulse" />
+                          <div className="relative w-20 h-20 rounded-full bg-gradient-to-tr from-amber-500 via-amber-400 to-yellow-300 text-amber-950 flex items-center justify-center border-2 border-white shadow-lg">
+                            <Lock className="w-10 h-10 stroke-[2.5]" />
+                          </div>
                         </div>
 
                         <div>
                           <h4 className="text-base font-black text-slate-900">Vault Currently Sealed</h4>
                           <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
-                            The secret message and photos inside will be revealed automatically on {new Date(selectedCapsule.unlockDate).toLocaleDateString()}.
+                            The secret message and photos inside are locked until {new Date(selectedCapsule.unlockDate).toLocaleDateString()}.
                           </p>
                         </div>
 
                         <div className="p-4 rounded-2xl bg-slate-900 text-white font-mono text-lg font-bold tracking-wider inline-block">
                           ⏳ {timeLeft.text}
+                        </div>
+
+                        {/* Interactive Bribe Button */}
+                        <div className="pt-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const toBribe = selectedCapsule;
+                              setSelectedCapsule(null);
+                              setBribingCapsule(toBribe);
+                            }}
+                            className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 hover:from-amber-600 hover:to-amber-800 text-white font-bold text-xs shadow-md transition flex items-center justify-center gap-2 cursor-pointer hover:scale-[1.02] active:scale-98"
+                          >
+                            <Gift className="w-4 h-4 text-amber-200" />
+                            <span>Send Bribe to Owner for Early Access 🍫</span>
+                          </button>
                         </div>
 
                         <div className="text-xs text-slate-400">
@@ -581,6 +630,19 @@ export const FamilyTimeCapsuleView: React.FC<FamilyTimeCapsuleViewProps> = ({
           </div>
         )}
       </AnimatePresence>
+
+      {/* SEALED TIME CAPSULE & BRIBE MODAL */}
+      <SealedTimeCapsuleBribeModal
+        isOpen={!!bribingCapsule}
+        capsule={bribingCapsule}
+        currentSession={currentSession}
+        onClose={() => setBribingCapsule(null)}
+        onSubmitBribe={async (capsuleId, message) => {
+          if (onRequestUnlock) {
+            await onRequestUnlock(capsuleId, message);
+          }
+        }}
+      />
     </div>
   );
 };

@@ -135,6 +135,42 @@
         "timestamp": { "type": "string" }
       },
       "required": ["id", "senderName", "timestamp", "status"]
+    },
+    "vibe_streak_tracker": {
+      "title": "VibeStreakTracker",
+      "description": "Automated daily streak tracker between connected users based on active messaging and streak shares",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userCode1": { "type": "string" },
+        "userCode2": { "type": "string" },
+        "user1Name": { "type": "string" },
+        "user2Name": { "type": "string" },
+        "streakCount": { "type": "number" },
+        "lastInteractionAt": { "type": "string" },
+        "expiresAt": { "type": "string" },
+        "isExpiringSoon": { "type": "boolean" },
+        "relationship": { "type": "string" }
+      },
+      "required": ["id", "userCode1", "userCode2", "streakCount", "lastInteractionAt"]
+    },
+    "time_capsule_request": {
+      "title": "TimeCapsuleUnlockRequest",
+      "description": "Fun bribe / request to capsule owner to unlock sealed time capsule for specific user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "capsuleId": { "type": "string" },
+        "requesterId": { "type": "string" },
+        "requesterName": { "type": "string" },
+        "requesterAvatar": { "type": "string" },
+        "requesterCode": { "type": "string" },
+        "ownerCode": { "type": "string" },
+        "message": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "capsuleId", "requesterId", "message", "status", "createdAt"]
     }
   }
 }

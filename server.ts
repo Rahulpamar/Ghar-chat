@@ -3586,6 +3586,8 @@ app.post("/api/social/posts", (req: Request, res: Response) => {
     quote = "Every day is a new beginning.",
     targetAudience = "all", // 'family' | 'connectors' | 'all'
     streakCount = 15,
+    isViewOnce = false,
+    viewDurationSeconds = 7,
   } = req.body;
 
   const newPost: any = {
@@ -3600,6 +3602,10 @@ app.post("/api/social/posts", (req: Request, res: Response) => {
     quote,
     targetAudience,
     streakCount,
+    isViewOnce: !!isViewOnce,
+    viewDurationSeconds: viewDurationSeconds || 7,
+    viewedBy: [],
+    disappearedFor: [],
     createdAt: new Date().toISOString(),
     likes: [],
     reactions: { "❤️": 1 },
@@ -3611,6 +3617,39 @@ app.post("/api/social/posts", (req: Request, res: Response) => {
 
   broadcast("social:post_created", newPost);
   res.json({ success: true, post: newPost });
+});
+
+// Delete Daily Streak Post
+app.delete("/api/social/posts/:id", (req: Request, res: Response) => {
+  const postId = req.params.id;
+  if (!state.socialPosts) state.socialPosts = [];
+  const initialLen = state.socialPosts.length;
+  state.socialPosts = state.socialPosts.filter((p) => p.id !== postId);
+
+  broadcast("social:post_deleted", { postId });
+  res.json({ success: true, deleted: state.socialPosts.length < initialLen });
+});
+
+// Mark View-Once Disappearing Streak as viewed
+app.post("/api/social/posts/:id/view-once", (req: Request, res: Response) => {
+  const { userCode = "GHAR-9482" } = req.body;
+  const post = (state.socialPosts || []).find((p) => p.id === req.params.id);
+  if (!post) {
+    return res.status(404).json({ error: "Post not found." });
+  }
+
+  if (!post.viewedBy) post.viewedBy = [];
+  if (!post.disappearedFor) post.disappearedFor = [];
+
+  if (!post.viewedBy.includes(userCode)) {
+    post.viewedBy.push(userCode);
+  }
+  if (!post.disappearedFor.includes(userCode)) {
+    post.disappearedFor.push(userCode);
+  }
+
+  broadcast("social:post_updated", post);
+  res.json({ success: true, post });
 });
 
 // 6. Social Feed: Toggle Like
@@ -3854,6 +3893,72 @@ app.patch("/api/time-capsules/:id/unlock", (req: Request, res: Response) => {
   res.json({ success: true, capsule });
 });
 
+// Request early unlock with a fun bribe message
+app.post("/api/time-capsules/:id/request-unlock", (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { requesterId, requesterName, requesterAvatar, requesterCode, message } = req.body;
+  const capsule = (state.timeCapsules || []).find((c) => c.id === id);
+
+  if (!capsule) {
+    return res.status(404).json({ error: "Time capsule not found." });
+  }
+
+  const unlockReq: any = {
+    id: `req-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    capsuleId: id,
+    capsuleTitle: capsule.title,
+    requesterId: requesterId || "mem-1",
+    requesterName: requesterName || "Rahul Sharma",
+    requesterAvatar: requesterAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
+    requesterCode: requesterCode || "GHAR-9482",
+    ownerCode: capsule.authorCode || capsule.authorId || "GHAR-8823",
+    ownerName: capsule.authorName,
+    message: message || "Tell me the password and I'll treat you to Dairy Milk! 🍫",
+    status: "pending",
+    createdAt: new Date().toISOString(),
+  };
+
+  if (!capsule.unlockRequests) capsule.unlockRequests = [];
+  capsule.unlockRequests.unshift(unlockReq);
+
+  broadcast("time_capsule:unlock_requested", { request: unlockReq, capsule });
+  res.json({ success: true, request: unlockReq });
+});
+
+// Owner responds to bribe request (accepts/declines)
+app.post("/api/time-capsules/:id/respond-unlock", (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { requestId, status, requesterCode } = req.body;
+  const capsule = (state.timeCapsules || []).find((c) => c.id === id);
+
+  if (!capsule) {
+    return res.status(404).json({ error: "Time capsule not found." });
+  }
+
+  if (!capsule.unlockedForUsers) capsule.unlockedForUsers = [];
+  if (status === "accepted" && requesterCode && !capsule.unlockedForUsers.includes(requesterCode)) {
+    capsule.unlockedForUsers.push(requesterCode);
+  }
+
+  if (capsule.unlockRequests) {
+    const r = capsule.unlockRequests.find((reqItem: any) => reqItem.id === requestId);
+    if (r) {
+      r.status = status;
+      r.respondedAt = new Date().toISOString();
+    }
+  }
+
+  broadcast("time_capsule:unlock_responded", {
+    capsuleId: id,
+    requestId,
+    status,
+    requesterCode,
+    capsule,
+  });
+
+  res.json({ success: true, capsule });
+});
+
 // ----------------------------------------------------
 // VIRAL FEATURE 2: EMERGENCY SOS PANIC DROP ROUTES
 // ----------------------------------------------------
@@ -3903,6 +4008,93 @@ app.post("/api/emergency-sos/resolve", (req: Request, res: Response) => {
 
   broadcast("emergency_sos:resolved", { alertId, resolvedAt: new Date().toISOString() });
   res.json({ success: true, resolved });
+});
+
+// ----------------------------------------------------
+// FEATURE 3: GHAR REWIND MONTAGE & VIBE STREAKS
+// ----------------------------------------------------
+app.get("/api/rewind/montage", (_req: Request, res: Response) => {
+  const posts = state.socialPosts || [];
+  const notes = state.storyNotes || [];
+
+  const postMoments = posts.map((p, idx) => ({
+    id: `rewind-post-${p.id}`,
+    type: "photo" as const,
+    title: p.locationTag ? `Moment at ${p.locationTag}` : "Daily Highlight",
+    caption: p.note || p.quote || "Shared memory with the circle",
+    imageUrl: p.photoUrl,
+    authorName: p.authorName,
+    authorAvatar: p.authorAvatar,
+    authorCode: p.authorCode,
+    timestamp: p.createdAt,
+    streakCount: p.streakCount || 14,
+    timeOfDayLabel: idx % 3 === 0 ? "Morning Glory 🌅" : idx % 3 === 1 ? "Afternoon Chill ☕" : "Golden Hour 🌙",
+  }));
+
+  const noteMoments = notes.map((n, idx) => ({
+    id: `rewind-note-${n.id}`,
+    type: "note" as const,
+    title: `${n.emoji} ${n.isGhost ? "Ghost Note" : "Daily Vibe"}`,
+    caption: n.note,
+    authorName: n.authorName,
+    authorAvatar: n.authorAvatar,
+    authorCode: n.authorCode,
+    timestamp: n.createdAt,
+    streakCount: 14,
+    timeOfDayLabel: idx % 2 === 0 ? "Daytime Buzz ✨" : "Night Thoughts 🌙",
+  }));
+
+  const allMoments = [...postMoments, ...noteMoments].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+
+  res.json({ success: true, moments: allMoments });
+});
+
+app.get("/api/vibe-streaks", (_req: Request, res: Response) => {
+  res.json({ success: true, vibeStreaks: (state as any).vibeStreaks || [] });
+});
+
+app.post("/api/vibe-streaks/increment", (req: Request, res: Response) => {
+  const { userCode1, userCode2, userName2 } = req.body;
+  if (!userCode1 || !userCode2) {
+    return res.status(400).json({ error: "userCode1 and userCode2 are required" });
+  }
+
+  if (!(state as any).vibeStreaks) (state as any).vibeStreaks = [];
+  const list: any[] = (state as any).vibeStreaks;
+
+  let existing = list.find(
+    (s) =>
+      (s.userCode1 === userCode1 && s.userCode2 === userCode2) ||
+      (s.userCode1 === userCode2 && s.userCode2 === userCode1)
+  );
+
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+  if (existing) {
+    existing.streakCount = (existing.streakCount || 0) + 1;
+    existing.lastActiveTimestamp = now;
+    existing.streakExpiresAt = expiresAt;
+    existing.status = "active";
+  } else {
+    existing = {
+      id: `streak-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      userCode1,
+      userCode2,
+      userName2: userName2 || userCode2,
+      streakCount: 1,
+      lastActiveTimestamp: now,
+      streakExpiresAt: expiresAt,
+      status: "active",
+      createdAt: now,
+    };
+    list.unshift(existing);
+  }
+
+  broadcast("vibe_streak:updated", existing);
+  res.json({ success: true, streak: existing });
 });
 
 // Vite middleware for dev or static serving in production

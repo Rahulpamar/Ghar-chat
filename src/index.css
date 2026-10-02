@@ -1,1 +1,103 @@
 @import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    letter-spacing: -0.012em;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    color: #0f172a;
+    background-color: #fafafa;
+    line-height: 1.42;
+  }
+
+  /* Instagram-Style Heading Typography */
+  h1, h2, h3, h4, h5, h6 {
+    letter-spacing: -0.025em;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+
+  /* Native input and button font inheritance */
+  button, input, textarea, select {
+    font-family: inherit;
+    letter-spacing: inherit;
+  }
+}
+
+/* Instagram-Style UI Typography Utilities */
+.ig-title {
+  letter-spacing: -0.028em;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.ig-subhead {
+  font-size: 0.6875rem; /* 11px */
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+}
+
+.ig-username {
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: #0f172a;
+}
+
+.ig-body {
+  font-size: 0.8125rem; /* 13px */
+  line-height: 1.45;
+  color: #1e293b;
+  letter-spacing: -0.01em;
+}
+
+.ig-caption {
+  font-size: 0.75rem; /* 12px */
+  color: #64748b;
+  letter-spacing: -0.005em;
+  line-height: 1.35;
+}
+
+.ig-stat-number {
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  font-feature-settings: "tnum";
+}
+
+/* Story Gradient Ring */
+.ig-story-ring {
+  background: linear-gradient(45deg, #0F5132 0%, #10b981 40%, #f59e0b 80%, #ef4444 100%);
+  padding: 2.5px;
+  border-radius: 9999px;
+}
+
+/* Snap View-Once Timer Pulse */
+@keyframes snap-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.04); }
+}
+
+.animate-snap-pulse {
+  animation: snap-pulse 1.8s infinite ease-in-out;
+}
+
+/* Vibe Flame Bounce */
+@keyframes flame-glow {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.6)); }
+  50% { filter: drop-shadow(0 0 10px rgba(239, 68, 68, 0.8)); }
+}
+
+.flame-glow {
+  animation: flame-glow 2s infinite ease-in-out;
+}

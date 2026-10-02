@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { X, Flame, Camera, MapPin, Quote, Users, Sparkles, Image as ImageIcon, Upload, Loader2 } from "lucide-react";
+import { X, Flame, Camera, MapPin, Quote, Users, Sparkles, Image as ImageIcon, Upload, Loader2, EyeOff, Timer } from "lucide-react";
 import { SocialPost, UserAuthSession } from "../types";
 import { uploadCompressedMedia } from "../lib/firebase";
 
@@ -14,6 +14,8 @@ interface PostStreakModalProps {
     quote?: string;
     locationTag?: string;
     targetAudience: 'family' | 'connectors' | 'all';
+    isViewOnce?: boolean;
+    viewDurationSeconds?: number;
   }) => void;
 }
 
@@ -36,6 +38,8 @@ export const PostStreakModal: React.FC<PostStreakModalProps> = ({
   const [quoteText, setQuoteText] = useState("");
   const [locationText, setLocationText] = useState("Hyderabad");
   const [isCompressing, setIsCompressing] = useState(false);
+  const [isViewOnce, setIsViewOnce] = useState(false);
+  const [viewDurationSeconds, setViewDurationSeconds] = useState(7);
 
   if (!isOpen) return null;
 
@@ -64,10 +68,13 @@ export const PostStreakModal: React.FC<PostStreakModalProps> = ({
       quote: quoteText.trim() || undefined,
       locationTag: locationText.trim() || "Hyderabad",
       targetAudience,
+      isViewOnce,
+      viewDurationSeconds: isViewOnce ? viewDurationSeconds : undefined,
     });
 
     setNoteText("");
     setQuoteText("");
+    setIsViewOnce(false);
     onClose();
   };
 
@@ -237,6 +244,59 @@ export const PostStreakModal: React.FC<PostStreakModalProps> = ({
                 className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F5132] text-slate-900"
               />
             </div>
+          </div>
+
+          {/* ONE-TIME VIEW-ONCE DISAPPEARING STREAK TOGGLE (SNAPCHAT STYLE) */}
+          <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 space-y-2.5 shadow-2xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-xs">
+                  <EyeOff className="w-4 h-4" />
+                </span>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-amber-950">View-Once Disappearing Media</span>
+                    <span className="px-1.5 py-0.2 rounded-full bg-amber-200 text-amber-900 text-[9px] font-black uppercase tracking-wider">
+                      Snapchat Style
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-amber-800">
+                    Self-destructs & permanently vanishes from recipient's feed once viewed.
+                  </p>
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={isViewOnce}
+                onChange={(e) => setIsViewOnce(e.target.checked)}
+                className="w-5 h-5 accent-amber-600 rounded cursor-pointer shrink-0"
+              />
+            </div>
+
+            {isViewOnce && (
+              <div className="flex items-center justify-between pt-2 border-t border-amber-200/70 text-xs">
+                <span className="text-[11px] font-bold text-amber-900 flex items-center gap-1">
+                  <Timer className="w-3.5 h-3.5 text-amber-700" />
+                  Self-destruct countdown:
+                </span>
+                <div className="flex items-center gap-1.5">
+                  {[5, 7, 10].map((sec) => (
+                    <button
+                      key={sec}
+                      type="button"
+                      onClick={() => setViewDurationSeconds(sec)}
+                      className={`px-2.5 py-1 rounded-xl text-[10px] font-bold transition cursor-pointer ${
+                        viewDurationSeconds === sec
+                          ? "bg-amber-600 text-white shadow-xs"
+                          : "bg-white text-amber-900 border border-amber-200 hover:bg-amber-100"
+                      }`}
+                    >
+                      ⏱️ {sec}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Submit Button */}

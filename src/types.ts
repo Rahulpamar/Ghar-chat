@@ -351,6 +351,9 @@ export interface Connector {
   lastMessage?: string;
   lastMessageTime?: string;
   mutualCount?: number;
+  streakCount?: number;
+  streakExpiresAt?: string;
+  isStreakExpiring?: boolean;
 }
 
 export interface VoiceRoomParticipant {
@@ -433,6 +436,37 @@ export interface SocialPost {
   likes: string[]; // member IDs
   reactions: Record<string, number>; // emoji -> count
   comments: SocialComment[];
+  isViewOnce?: boolean; // Snapchat-style view-once disappearing streak
+  viewDurationSeconds?: number; // e.g. 5, 7, or 10 seconds countdown
+  viewedBy?: string[]; // userCodes who opened it
+  disappearedFor?: string[]; // userCodes for whom this streak permanently vanished
+}
+
+export interface GharRewindMoment {
+  id: string;
+  authorName: string;
+  authorAvatar: string;
+  authorCode: string;
+  photoUrl: string;
+  note: string;
+  quote?: string;
+  locationTag: string;
+  timestamp: string;
+  timeOfDayLabel: string;
+  streakCount: number;
+}
+
+export interface VibeStreakTracker {
+  id: string;
+  userCode1: string;
+  userCode2: string;
+  user1Name: string;
+  user2Name: string;
+  streakCount: number;
+  lastInteractionAt: string;
+  expiresAt: string;
+  isExpiringSoon: boolean;
+  relationship?: string;
 }
 
 export interface UpiPaymentRequest {
@@ -447,6 +481,22 @@ export interface UpiPaymentRequest {
   approvedBy?: string;
 }
 
+export interface TimeCapsuleUnlockRequest {
+  id: string;
+  capsuleId: string;
+  capsuleTitle: string;
+  requesterId: string;
+  requesterName: string;
+  requesterAvatar: string;
+  requesterCode?: string;
+  ownerCode?: string;
+  ownerName?: string;
+  message: string; // The fun request / bribe text, e.g. "Tell me the password and I'll treat you to Dairy Milk!"
+  status: 'pending' | 'accepted' | 'declined' | 'rejected';
+  createdAt: string;
+  respondedAt?: string;
+}
+
 export interface TimeCapsule {
   id: string;
   title: string;
@@ -455,10 +505,13 @@ export interface TimeCapsule {
   authorId: string;
   authorName: string;
   authorAvatar: string;
+  authorCode?: string;
   targetAudience: 'family' | 'connectors' | 'all';
   unlockDate: string; // ISO Date String (e.g. Diwali, New Year)
   occasionTag: string; // e.g., 'Diwali 🪔', 'New Year 🎆', 'Birthday 🎂', 'Anniversary 💖', 'Custom ⏳'
   isUnlocked: boolean;
+  unlockedForUsers?: string[]; // Specific userCodes for whom this capsule is unlocked via instant bribe accept
+  unlockRequests?: TimeCapsuleUnlockRequest[];
   createdAt: string;
   reactions?: Record<string, number>;
 }
@@ -500,6 +553,8 @@ export interface AppState {
   storyNotes?: StoryNote[];
   socialPosts?: SocialPost[];
   timeCapsules?: TimeCapsule[];
+  timeCapsuleRequests?: TimeCapsuleUnlockRequest[];
+  vibeStreaks?: VibeStreakTracker[];
   activeSosPanic?: EmergencySosEvent | null;
   upiRequests?: UpiPaymentRequest[];
   activeUrgentAlert?: {

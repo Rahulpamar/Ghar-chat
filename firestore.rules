@@ -41,6 +41,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Vibe Streaks Automated Trackers
+    match /vibe_streaks/{streakId} {
+      allow read, write: if true;
+    }
+
     // Contacts
     match /contacts/{contactId} {
       allow read, write: if true;
@@ -48,6 +53,16 @@ service cloud.firestore {
 
     // Family Time Capsules
     match /time_capsules/{capsuleId} {
+      allow read, write: if true;
+    }
+
+    // Time Capsule Unlock & Bribe Requests
+    match /time_capsule_requests/{requestId} {
+      allow read, write: if true;
+    }
+
+    // Real-Time Notifications
+    match /notifications/{notificationId} {
       allow read, write: if true;
     }
 
